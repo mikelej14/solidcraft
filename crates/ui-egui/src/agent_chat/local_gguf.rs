@@ -168,7 +168,7 @@ pub fn prepare_runtime() -> Result<PathBuf, String> {
                 let filename = filename.rsplit('/').next().unwrap_or("");
                 let lower = filename.to_ascii_lowercase();
                 if !(lower == "llama-server.exe" || lower.ends_with(".dll")) { continue; }
-                if filename.is_empty() || filename.contains([':', '/', '\\']) { continue; }
+                if filename.is_empty() || filename.chars().any(|c| matches!(c, ':' | '/' | '\\')) { continue; }
                 total = total.saturating_add(item.size());
                 if item.size() > 256 << 20 || total > 768 << 20 {
                     return Err("GGUF runtime archive has unexpectedly large files".into());
