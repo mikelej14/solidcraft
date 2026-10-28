@@ -25,6 +25,8 @@
 | --- | --- |
 | **Open GGUF…** | Choose a local `.gguf` file through the existing AI settings or assistant provider menu. |
 | **Load / Unload** | Start and stop a SolidCraft-managed `llama.cpp` inference process; unloading releases the process's resources. |
+| **GGUF chat-format selection** | Run llama.cpp with Jinja tool-call handling, selecting the model's embedded template instead of guessing a Qwen, Granite, or Ministral template from the filename. |
+| **CAD tool compatibility check** | Before connecting the assistant, send a harmless structured function-call probe. Models that cannot produce valid OpenAI `tool_calls` are rejected with a visible error instead of silently claiming CAD capability. |
 | **Bundled Windows runtime** | Windows x64 MSI and portable ZIP include a checksum-pinned Vulkan `llama.cpp` archive; no separately configured Ollama or LM Studio server is required for this option. |
 | **GPU / CPU fallback** | Attempts Vulkan GPU offload first, then retries with CPU layers if startup fails. |
 | **Existing assistant integration** | The local model uses SolidCraft's OpenAI-compatible assistant backend and existing CAD tools, approval controls and undo path. |
@@ -48,6 +50,12 @@ and its downloadable artifact instead of an older one.
 **Verified:** the Windows x64 Rust type-check, GGUF tests, WiX MSI creation,
 portable ZIP creation and packaged GGUF runtime presence passed in
 [the successful GitHub Actions build](https://github.com/mikelej14/solidcraft/actions/runs/40749531287).
+
+**Compatibility check note:** This checks whether a model can emit structured tool calls,
+not whether it will choose every CAD operation or dimension correctly. Not all
+GGUF conversions carry suitable tool-use chat templates, and some models may fail
+the check even if they can answer ordinary chat questions. The check runs after
+model loading, on a worker thread, and does not change external providers.
 
 **Not yet verified on a real user's Windows system:** clean installation,
 actual GGUF model load, AI-assisted CAD tool execution, unload/reload,
