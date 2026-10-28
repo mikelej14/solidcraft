@@ -81,9 +81,10 @@ pub struct State {
 
 /// The native GGUF provider's process and UI, shared by AI settings and the chat.
 #[cfg(not(target_arch = "wasm32"))]
-#[derive(Default)]
 pub struct LocalState {
     pub selected: Option<std::path::PathBuf>,
+    /// Context length, in tokens, used on the next local model load.
+    pub context_size: u32,
     pub runtime: super::local_gguf::Runtime,
     /// Only expose this provider to the chat after llama.cpp reports model readiness.
     pub ready: bool,
@@ -92,6 +93,22 @@ pub struct LocalState {
     pub(super) preparing: Option<std::sync::mpsc::Receiver<Result<std::path::PathBuf, String>>>,
     pub status: String,
     pub error: Option<String>,
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+impl Default for LocalState {
+    fn default() -> Self {
+        Self {
+            selected: None,
+            context_size: super::local_gguf::DEFAULT_CONTEXT_SIZE,
+            runtime: Default::default(),
+            ready: false,
+            waiting: None,
+            preparing: None,
+            status: String::new(),
+            error: None,
+        }
+    }
 }
 
 /// The model can be healthy but incapable of returning CAD tool calls.
@@ -146,7 +163,7 @@ fn launch_local(app: &mut SolveApp, ctx: &egui::Context, server: &std::path::Pat
     let local = &mut app.agent_chat.settings.local;
     let Some(model) = local.selected.clone() else { return };
     // Explicit GPU-only loading: no silent full CPU copy/fallback.
-    match local.runtime.load(&model, server) {
+    match local.runtime.load(&model, server, local.context_size) {
         Err(error) => {
             local.error = Some(error);
             local.status.clear();
@@ -670,6 +687,21 @@ fn local_gguf_section(app: &mut SolveApp, ui: &mut egui::Ui) {
             ui_kit::Text::Note("local_gguf_intro"),
         );
         ui_kit::settings_short_note(ui, &selected);
+        ui.horizontal(|ui| {
+            ui.label("Context size");
+            let response = ui.add_enabled(
+                !running && !pending,
+                egui::DragValue::new(&mut app.agent_chat.settings.local.context_size)
+                    .range(super::local_gguf::MIN_CONTEXT_SIZE..=super::local_gguf::MAX_CONTEXT_SIZE)
+                    .speed(1024)
+                    .suffix(" tokens"),
+            );
+            crate::scenario::publish_handle("prefs:gguf:context_size", response.rect.center());
+        });
+        ui_kit::settings_short_note(
+            ui,
+            "Default 32,768 tokens. Higher values require more GPU memory. Unload the model to change this setting; the new value takes effect on the next Load.",
+        );
         if let Some(active) = &active {
             ui_kit::settings_short_note(ui, active);
         }
