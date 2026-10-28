@@ -1,11 +1,11 @@
-# Dedicated Windows installer build for the clean native GGUF branch.
+# Dedicated Windows installer build for the native GGUF branch.
 # Creates a downloadable MSI and portable ZIP. Never publishes or merges.
 name: Windows GGUF Installer
 
 on:
   push:
     branches:
-      - solidcraft-native-gguf-clean
+      - solidcraft-native-gguf-load
     paths:
       - 'crates/ui-egui/**'
       - 'apps/solidcraft/**'
