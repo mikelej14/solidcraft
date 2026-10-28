@@ -87,12 +87,23 @@ pub struct LocalState {
     pub runtime: super::local_gguf::Runtime,
     /// Only expose this provider to the chat after llama.cpp reports model readiness.
     pub ready: bool,
-    pub(super) waiting: Option<std::sync::mpsc::Receiver<Result<(), String>>>,
+    pub(super) waiting: Option<std::sync::mpsc::Receiver<LocalCheckEvent>>,
     /// Unpacks the signed and checksum-pinned runtime without freezing CAD.
     pub(super) preparing: Option<std::sync::mpsc::Receiver<Result<std::path::PathBuf, String>>>,
     cpu_retried: bool,
     pub status: String,
     pub error: Option<String>,
+}
+
+/// The model can be healthy but incapable of returning CAD tool calls.
+/// Keep startup errors separate so changing CPU/GPU allocation never masks a
+/// chat-template/protocol failure.
+#[cfg(not(target_arch = "wasm32"))]
+pub(super) enum LocalCheckEvent {
+    CheckingTools,
+    Ready(String),
+    StartupFailed(String),
+    ToolsFailed(String),
 }
 
 /// Start only a server owned by this SolidCraft process. Keep the old provider
@@ -132,6 +143,8 @@ fn start_local(app: &mut SolveApp, ctx: &egui::Context, cpu_only: bool) {
 /// Start the verified local runtime after the archive is available on disk.
 #[cfg(not(target_arch = "wasm32"))]
 fn launch_local(app: &mut SolveApp, ctx: &egui::Context, server: &std::path::Path) {
+    // The HTTP service is owned by SolidCraft; borrow it before the local state.
+    let http = app.services.agent_http.clone();
     let local = &mut app.agent_chat.settings.local;
     let Some(model) = local.selected.clone() else { return };
     let cpu_only = local.cpu_retried;
@@ -141,14 +154,30 @@ fn launch_local(app: &mut SolveApp, ctx: &egui::Context, server: &std::path::Pat
             local.error = Some(error);
             local.status.clear();
         }
-        Ok((endpoint, _)) => {
+        Ok((endpoint, model_name)) => {
             let (sender, receiver) = std::sync::mpsc::channel();
             let wake = ctx.clone();
             match std::thread::Builder::new()
                 .name("solidcraft-gguf-health".into())
                 .spawn(move || {
-                    let result = super::local_gguf::Runtime::wait_ready(&endpoint, std::time::Duration::from_secs(180));
-                    let _ = sender.send(result);
+                    let loaded = super::local_gguf::Runtime::wait_ready(&endpoint, std::time::Duration::from_secs(180));
+                    match loaded {
+                        Err(error) => {
+                            let _ = sender.send(LocalCheckEvent::StartupFailed(error));
+                        }
+                        Ok(()) => {
+                            let _ = sender.send(LocalCheckEvent::CheckingTools);
+                            wake.request_repaint();
+                            let check = http
+                                .as_ref()
+                                .ok_or_else(|| "SolidCraft's HTTP service is unavailable; cannot validate local CAD tool calls".to_string())
+                                .and_then(|http| super::local_gguf::verify_tool_calling(http, &endpoint, &model_name));
+                            match check {
+                                Ok(report) => { let _ = sender.send(LocalCheckEvent::Ready(report)); }
+                                Err(error) => { let _ = sender.send(LocalCheckEvent::ToolsFailed(error)); }
+                            }
+                        }
+                    }
                     wake.request_repaint();
                 })
             {
@@ -224,19 +253,24 @@ pub(super) fn poll_local(app: &mut SolveApp, ctx: &egui::Context) {
 
     let result = local.waiting.as_ref().and_then(|rx| match rx.try_recv() {
         Ok(value) => Some(value),
-        Err(std::sync::mpsc::TryRecvError::Disconnected) => Some(Err("Model readiness check ended unexpectedly".into())),
+        Err(std::sync::mpsc::TryRecvError::Disconnected) => Some(LocalCheckEvent::StartupFailed("Model startup worker ended unexpectedly".into())),
         Err(std::sync::mpsc::TryRecvError::Empty) => None,
     });
     if let Some(result) = result {
-        local.waiting = None;
         match result {
-            Ok(()) => {
+            LocalCheckEvent::CheckingTools => {
+                local.status = "Model loaded; checking structured CAD tool calls…".into();
+                ctx.request_repaint_after(std::time::Duration::from_millis(200));
+            }
+            LocalCheckEvent::Ready(report) => {
+                local.waiting = None;
                 local.ready = true;
-                local.status = "GGUF loaded and ready".into();
+                local.status = format!("GGUF ready — {report}");
                 app.agent_chat.agent_id = Some(super::local_gguf::AGENT_ID.into());
                 super::connect(app, ctx);
             }
-            Err(error) => {
+            LocalCheckEvent::StartupFailed(error) => {
+                local.waiting = None;
                 let retry_cpu = !local.cpu_retried;
                 local.runtime.unload();
                 if retry_cpu {
@@ -246,6 +280,16 @@ pub(super) fn poll_local(app: &mut SolveApp, ctx: &egui::Context) {
                     local.error = Some(format!("{error}. Log: {log}"));
                     local.status.clear();
                 }
+            }
+            LocalCheckEvent::ToolsFailed(error) => {
+                // Retrying on CPU cannot fix a model/tool-template protocol
+                // mismatch. Release VRAM, and show a clear message instead
+                // of silently connecting a model that cannot operate CAD.
+                local.waiting = None;
+                local.ready = false;
+                local.runtime.unload();
+                local.status = "GGUF not connected — CAD tool check failed".into();
+                local.error = Some(error);
             }
         }
     } else if pending {
@@ -600,11 +644,13 @@ pub(super) fn pick_local_file(app: &mut SolveApp, ctx: &egui::Context, auto_load
     app.pick_file("GGUF model", &["gguf"], move |app, path| {
         let Some(path) = path else { return };
         let file = std::path::PathBuf::from(path);
-        if !file.is_file() || !file.extension().is_some_and(|e| e.eq_ignore_ascii_case("gguf")) {
+        if !file.is_file() || !file.extension().and_then(|e| e.to_str()).is_some_and(|e| e.eq_ignore_ascii_case("gguf")) {
             app.agent_chat.settings.local.error = Some("Choose an existing .gguf file".into());
             return;
         }
-        if auto_load {
+        // Selecting a different GGUF cannot leave the old model consuming
+        // memory or cause the Load button to target the wrong file.
+        if app.agent_chat.settings.local.runtime.endpoint.is_some() || auto_load {
             unload_local(app);
         }
         let local = &mut app.agent_chat.settings.local;
