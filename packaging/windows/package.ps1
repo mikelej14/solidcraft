@@ -122,6 +122,7 @@ if ($Phase -ne 'package') {
       Remove-Item -Force $Archive
       throw "llama.cpp archive SHA-256 mismatch (expected $GgufSha256, got $ActualHash)"
     }
+    Copy-Item (Join-Path $Root 'packaging/windows/LLAMA-CPP-LICENSE.txt') $Stage
   }
 }
 if ($GgufBundle -eq 'yes' -and !(Test-Path (Join-Path $Stage 'local-gguf.zip'))) {
@@ -155,7 +156,10 @@ $Portable = Join-Path $TargetDir "windows-package\solidcraft-$Version-windows-$A
 Remove-Item -Recurse -Force $Portable -ErrorAction SilentlyContinue
 New-Item -ItemType Directory -Force -Path $Portable | Out-Null
 Copy-Item (Join-Path $Stage '*.exe') $Portable
-if ($GgufBundle -eq 'yes') { Copy-Item (Join-Path $Stage 'local-gguf.zip') $Portable }
+if ($GgufBundle -eq 'yes') {
+  Copy-Item (Join-Path $Stage 'local-gguf.zip') $Portable
+  Copy-Item (Join-Path $Stage 'LLAMA-CPP-LICENSE.txt') $Portable
+}
 foreach ($f in 'README.md', 'LICENSE-MIT', 'LICENSE-APACHE', 'NOTICE', 'THIRD-PARTY-LICENSES.txt') { Copy-Item (Join-Path $Root $f) $Portable }
 $Zip = Join-Path $Dist "solidcraft-$Version-windows-$Arch-portable.zip"
 Remove-Item -Force $Zip -ErrorAction SilentlyContinue
