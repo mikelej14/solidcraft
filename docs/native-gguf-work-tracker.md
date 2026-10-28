@@ -35,10 +35,11 @@ These entries distinguish **committed code** from **validated behavior**.
 - [x] Owned localhost llama-server process, health-based readiness and process shutdown
 - [x] Temporary OpenAI-compatible provider routed through the existing agent tool/permission/undo system
 - [x] Unit test: saved external URL configurations survive local provider selection
-- [x] Initial Vulkan loading with CPU-only retry on failure
+- [x] Vulkan GPU-only model loading; automatic CPU fallback removed to avoid unexpected extra system RAM use
 - [x] llama-server `--jinja` uses GGUF-embedded chat templates for Qwen/Granite/Ministral and other families, without filename-based template overrides
 - [x] Automatic tool-call protocol probe on a worker before marking the local model CAD-ready; rejects incompatible chat-only GGUFs without executing any actual CAD command
 - [x] Missing tool calls do not trigger a pointless GPU-to-CPU retry
+- [x] Exclusive GPU flags include `--gpu-layers all`, `--fit off`, `--no-host`, and `--load-mode none` (no model-file mmap); real Radeon 680M memory use still needs verification
 - [x] SHA-verified llama.cpp Vulkan runtime archive added to Windows x64/ARM64 MSI and portable package *scripts*
 - [x] Runtime extraction happens off the UI thread when a model is loaded
 - [x] Windows Rust type-check and GGUF-specific unit tests passed in [CI run 40749531287](https://github.com/mikelej14/solidcraft/actions/runs/40749531287); this is not a claim that the complete UI test suite passed
