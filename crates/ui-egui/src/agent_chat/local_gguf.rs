@@ -93,7 +93,8 @@ impl Runtime {
 
     pub fn unload(&mut self) {
         if let Some(mut child) = self.child.take() {
-            if child.try_wait().ok().flatten().is_none() {
+            // A failed status probe must not leave the owned model running.
+            if !matches!(child.try_wait(), Ok(Some(_))) {
                 let _ = child.kill();
                 let _ = child.wait();
             }
@@ -136,7 +137,7 @@ pub fn prepare_runtime() -> Result<PathBuf, String> {
 
         let user_dir = std::env::var_os("LOCALAPPDATA")
             .map(PathBuf::from).unwrap_or_else(std::env::temp_dir);
-        let target_dir = user_dir.join("SolidCraft").join("llama-b11966-vulkan");
+        let target_dir = user_dir.join("SolidCraft").join(format!("llama-b11966-vulkan-{}", std::env::consts::ARCH));
         let executable = target_dir.join(binary);
         if executable.is_file() {
             return Ok(executable);
