@@ -28,6 +28,8 @@ pub mod context;
 #[cfg(not(target_arch = "wasm32"))]
 pub mod discover;
 pub mod gate;
+#[cfg(not(target_arch = "wasm32"))]
+pub mod local_gguf;
 mod markdown;
 mod markdown_view;
 mod panel;
