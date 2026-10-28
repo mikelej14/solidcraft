@@ -1,73 +1,94 @@
 <p align="center">
-  <img src="assets/icons/app/linux/exports/hicolor/256x256/apps/io.tangencylabs.solidcraft.png" width="96" height="96" alt="SolidCraft" />
+  <img src="assets/icons/app/linux/exports/hicolor/256x256/apps/io.tangencylabs.solidcraft.png" width="96" height="96" alt="SolidCraft icon" />
 </p>
 
-<h1 align="center">SolidCraft</h1>
+<h1 align="center">SolidCraft — Native GGUF Edition</h1>
 
 <p align="center">
-  <strong>An open-source parametric 3D CAD application built in pure Rust.</strong><br />
-  Sketch, constrain, and build solids with a parametric feature timeline. Change a dimension
-  and watch your model rebuild. Run it on your desktop, in your browser, or let AI agents
-  model through the built-in MCP server.
-</p>
-
-<div align="center">
-
-[![Download for Windows][badge-windows]][windows-msi]
-[![Download for macOS][badge-macos]][macos-dmg]
-[![Download for Linux][badge-linux]][linux-appimage]
-[![Get it from the Snap Store][badge-snap]][snap-store]
-[![Try it in your browser][badge-web]][web-app]
-
-</div>
-
-<p align="center">
-  <a href="https://solidcraft.io">Website</a> ·
-  <a href="https://solidcraft.io/download">Download</a> ·
-  <a href="https://solidcraft.io/app">Try it in the browser</a> ·
-  <a href="https://docs.solidcraft.io/">Documentation</a> ·
-  <a href="https://www.blacksmith.sh"><img src="https://img.shields.io/badge/CI-Blacksmith-000000?logo=githubactions&logoColor=white" alt="CI powered by Blacksmith" /></a>
-  <a href="https://discord.gg/FtU4NQNVDH">Discord</a> ·
-  <a href="https://github.com/bherbruck/solidcore">SolidCore</a>
+  <strong>Parametric 3D CAD with a built-in, locally hosted GGUF AI assistant.</strong><br />
+  A Windows-focused community fork of <a href="https://github.com/tangency-labs/solidcraft">SolidCraft by Tangency Labs</a>,
+  extending its existing assistant without replacing the CAD application or requiring a separate AI chat app.
 </p>
 
 <p align="center">
-  <a href="https://github.com/tangency-labs/solidcraft/actions/workflows/ci.yml?query=branch%3Amain"><img src="https://github.com/tangency-labs/solidcraft/actions/workflows/ci.yml/badge.svg?branch=main" alt="CI" /></a>
-  <a href="https://github.com/tangency-labs/solidcraft/releases/latest"><img src="https://img.shields.io/github/v/release/tangency-labs/solidcraft?label=release" alt="Latest release" /></a>
-  <a href="https://github.com/tangency-labs/solidcraft/releases"><img src="https://img.shields.io/github/downloads/tangency-labs/solidcraft/total?label=downloads" alt="Downloads" /></a>
-  <a href="LICENSE"><img src="https://img.shields.io/github/license/tangency-labs/solidcraft" alt="Licence" /></a>
-  <a href="https://discord.gg/FtU4NQNVDH"><img src="https://img.shields.io/badge/Discord-join-5865F2?logo=discord&logoColor=white" alt="Discord" /></a>
-  <a href="https://remade.wiki/projects/solidcraft/"><img src="https://remade.wiki/badges/listed-on-remade-classic.svg" alt="Listed on Remade" /></a>
-  <a href="https://github.com/tangency-labs/solidcraft/stargazers"><img src="https://img.shields.io/github/stars/tangency-labs/solidcraft?style=flat" alt="Stars" /></a>
+  <a href="https://github.com/mikelej14/solidcraft/actions/workflows/native-gguf-windows.yml"><img src="https://github.com/mikelej14/solidcraft/actions/workflows/native-gguf-windows.yml/badge.svg" alt="Windows native GGUF installer build status" /></a>
 </p>
 
-<p align="center">
-  <a href="https://trendshift.io/repositories/296178?utm_source=trendshift-badge&amp;utm_medium=badge&amp;utm_campaign=badge-trendshift-296178" target="_blank" rel="noopener noreferrer"><img src="https://trendshift.io/api/badge/trendshift/repositories/296178/daily" alt="tangency-labs%2Fsolidcraft | Trendshift" width="250" height="55"/></a>
-  <a href="https://trendshift.io/repositories/296178?utm_source=trendshift-badge&amp;utm_medium=badge&amp;utm_campaign=badge-trendshift-296178" target="_blank" rel="noopener noreferrer"><img src="https://trendshift.io/api/badge/trendshift/repositories/296178/daily?language=Rust" alt="tangency-labs%2Fsolidcraft | Trendshift (Rust)" width="250" height="55"/></a>
-</p>
+> **This is the modified fork, not the original SolidCraft distribution.**
+> The desktop program is still called **SolidCraft**. The native GGUF changes are
+> integrated into the **existing** AI assistant, while the original CAD UI, tool
+> system, permissions, undo, and external AI providers are retained.
 
-![SolidCraft: model a Raspberry Pi 4 case from an empty design: a sketch dimensioned with parameters, extrude, fillets and shell, a rim rounded in one pick, standoffs patterned on the board's mounting holes, port cut-outs, vent slots, "Pi 4" engraved in a font, a PETG material with its mass in Properties, and a height change in Parameters](docs/screenshots/demo.gif)
+## What we changed
 
-*A Raspberry Pi 4 case from an empty design: a sketch dimensioned with the board's parameters, extrude, fillet, shell, the rim rounded in one pick, an M2.5 standoff patterned on the 58 × 49 mm hole rectangle, port cut-outs, vent slots, "Pi 4" engraved in DejaVu Sans Bold and a PETG material defined in the design, with its mass in Properties, then height 24 → 32 mm in Parameters and it all rebuilds. 6× playback with the idle pauses cut. [Full video](https://github.com/tangency-labs/solidcraft/raw/refs/heads/main/docs/screenshots/demo.mp4), recorded with the [demo script](examples/demo/record_ui.sh).*
+| Feature | Native GGUF edition |
+| --- | --- |
+| **Open GGUF…** | Choose a local `.gguf` file through the existing AI settings or assistant provider menu. |
+| **Load / Unload** | Start and stop a SolidCraft-managed `llama.cpp` inference process; unloading releases the process's resources. |
+| **Bundled Windows runtime** | Windows x64 MSI and portable ZIP include a checksum-pinned Vulkan `llama.cpp` archive; no separately configured Ollama or LM Studio server is required for this option. |
+| **GPU / CPU fallback** | Attempts Vulkan GPU offload first, then retries with CPU layers if startup fails. |
+| **Existing assistant integration** | The local model uses SolidCraft's OpenAI-compatible assistant backend and existing CAD tools, approval controls and undo path. |
+| **Keep your other providers** | Saved external endpoints, credentials and custom URLs are not overwritten by selecting a local GGUF. |
+| **Local network scope** | The managed model server binds to `127.0.0.1` (your computer only). |
 
-## Download
+This is **local model hosting**, not a new CAD application, a separate AI UI or
+a wholesale rewrite of SolidCraft's modeling engine.
 
-- **Windows:** the [installer][windows-msi].
-- **macOS:** the [disk image][macos-dmg] (Apple silicon and Intel).
-- **Linux:** the [AppImage][linux-appimage], or `sudo snap install solidcraft` ([Snap Store][snap-store]).
-- **Web:** [try it in your browser][web-app], no install.
+### Windows installer and current validation
 
-ARM64 and 32-bit builds, portable zip, .deb, .rpm, Flatpak and the other packages are on the
-[downloads page](docs/downloads.md). The downloads aren't signed yet: on Windows choose
-**More info**, then **Run anyway** in SmartScreen; on macOS right-click SolidCraft and choose **Open**
-the first time. On SolidCraft 0.11 to 0.14, download once by hand; see
-[updating](https://docs.solidcraft.io/guide/updates.html#updating-from-011-to-014).
+**Windows x64:** [Download the successful MSI + portable ZIP build](https://github.com/mikelej14/solidcraft/actions/runs/40749531287)
+— sign in to GitHub if necessary and open the **Artifacts** section. Download
+**`SolidCraft-Native-GGUF-Windows-x64`**, extract that artifact ZIP, then run the
+`.msi` installer inside. The portable package is also included.
 
-## What works
+**Builds of the current branch:** [Windows GGUF Installer workflow](https://github.com/mikelej14/solidcraft/actions/workflows/native-gguf-windows.yml).
+For the newest installer after further changes, use the latest **successful** run
+and its downloadable artifact instead of an older one.
 
-Early but usable for simple parts: 75 of 76 public reference parts match their analytic or
-FreeCAD-computed volume, area, centre of mass and bounding box ([oracle](docs/oracle.md)); the
-other is a tracked bug.
+**Verified:** the Windows x64 Rust type-check, GGUF tests, WiX MSI creation,
+portable ZIP creation and packaged GGUF runtime presence passed in
+[the successful GitHub Actions build](https://github.com/mikelej14/solidcraft/actions/runs/40749531287).
+
+**Not yet verified on a real user's Windows system:** clean installation,
+actual GGUF model load, AI-assisted CAD tool execution, unload/reload,
+Vulkan performance, and switching between local and external providers.
+Vision/`mmproj` support is not presented as a completed capability.
+A successful CI build does **not** by itself establish that every GGUF model or CAD
+tool interaction works on your hardware.
+
+### Using the built-in local assistant
+
+1. Install the GGUF-enabled Windows MSI (or extract the **portable** package).
+2. Open **SolidCraft → AI settings** and choose **Open GGUF…**, or use
+   **Open and Load GGUF…** in the existing assistant's provider menu.
+3. Select a supported text GGUF model. Choose **Load** if you selected it in settings.
+4. Wait for the **GGUF loaded and ready** status, then use the normal assistant panel.
+5. Select **Unload** to stop local inference when finished.
+
+The bundled runtime runs as a child process of SolidCraft; you do not need
+to start an external server manually. Use relatively small, tool-capable GGUF
+models for your first tests; actual speed and tool-call reliability depend on the
+model, memory, hardware and drivers.
+
+### Platforms and upstream documentation
+
+The native packaged GGUF workflow here currently targets **Windows x64**; the
+original SolidCraft project also supports macOS, Linux and a browser app, but
+its [official downloads](https://solidcraft.io/download) are **not** these
+custom GGUF builds. Original documentation lives at
+[docs.solidcraft.io](https://docs.solidcraft.io/).
+
+The [GGUF integration tracker](docs/native-gguf-work-tracker.md) records
+implementation details and the remaining hardware-validation work.
+
+---
+
+## SolidCraft CAD foundation
+
+This fork retains the upstream SolidCraft parametric CAD functionality and its existing
+tooling. The upstream project's reference tests reported 75 of 76 reference parts matching
+their analytic or FreeCAD-computed volume, area, centre of mass and bounding box
+([oracle](docs/oracle.md)); that figure is not a fresh, independently reproduced test of this fork.
 
 - **Sketches and constraints:** lines, arcs, splines, text and more, solved by our own constraint solver, with parameter-driven dimensions.
 - **Features:** extrude, revolve, sweep, loft, fillet, chamfer, shell, draft, holes, threads, patterns, mirror, split and combine on an editable parametric timeline.
@@ -109,23 +130,26 @@ Format and example: [docs/scripts.md](docs/scripts.md). Pages can also be driven
 
 ## Contributing
 
-Help is welcome. [CONTRIBUTING.md](CONTRIBUTING.md) covers how to build and test, the code map,
-the clean-room and licence rules, and where help is wanted most. Open work is in
-[GitHub issues](https://github.com/tangency-labs/solidcraft/issues); chat is on
+[CONTRIBUTING.md](CONTRIBUTING.md) describes the original project's build and contribution
+rules. For this fork's native GGUF work, see
+[the integration tracker](docs/native-gguf-work-tracker.md) and
+[this fork's issues](https://github.com/mikelej14/solidcraft/issues).
+For upstream SolidCraft development, see
+[upstream issues](https://github.com/tangency-labs/solidcraft/issues) and their
 [Discord](https://discord.gg/FtU4NQNVDH).
 
-## Sponsors
+## Original project sponsors
 
 [![CI powered by Blacksmith](docs/sponsors/blacksmith-ci-powered.png)](https://www.blacksmith.sh)
 
-SolidCraft's continuous integration runs on [Blacksmith](https://www.blacksmith.sh), which
-sponsors its CI minutes.
+The upstream SolidCraft project uses [Blacksmith](https://www.blacksmith.sh) for sponsored
+CI minutes. This fork's Windows GGUF installer is built through GitHub Actions.
 
 ## Disclaimer
 
-The files in this repository are provided as is, without warranty, liability or indemnity, and
-Tangency Labs and the contributors accept no responsibility for any harmful or unlawful use of
-them: read [DISCLAIMER.md](DISCLAIMER.md).
+The files in this repository are provided as is, without warranty, liability or indemnity.
+This community modification is not an official Tangency Labs release, and the original authors
+are not responsible for changes made here. See [DISCLAIMER.md](DISCLAIMER.md).
 
 ## Licence
 
@@ -139,14 +163,3 @@ SolidCraft is not affiliated with, sponsored by or endorsed by Autodesk, Dassaul
 Siemens or any other CAD vendor. Fusion, AutoCAD, Inventor, SolidWorks, Onshape, Creo, Blender and
 Tinkercad are trademarks of their respective owners, named only to describe compatibility
 (see [NOTICE](NOTICE)).
-
-[badge-windows]: https://img.shields.io/badge/Windows-Download-0078D6?style=for-the-badge&logo=data%3Aimage%2Fsvg%2Bxml%3Bbase64%2CPHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAyNCAyNCIgZmlsbD0id2hpdGUiPjxwYXRoIGQ9Ik0yIDJoOS41djkuNUgyek0xMi41IDJIMjJ2OS41aC05LjV6TTIgMTIuNWg5LjVWMjJIMnpNMTIuNSAxMi41SDIyVjIyaC05LjV6Ii8%2BPC9zdmc%2B
-[badge-macos]: https://img.shields.io/badge/macOS-Download-333333?style=for-the-badge&logo=apple&logoColor=white
-[badge-linux]: https://img.shields.io/badge/Linux-AppImage-E95420?style=for-the-badge&logo=linux&logoColor=white
-[badge-snap]: https://img.shields.io/badge/Snap-Snap_Store-82BEA0?style=for-the-badge&logo=snapcraft&logoColor=white
-[badge-web]: https://img.shields.io/badge/Web-Try_in_browser-2EA44F?style=for-the-badge&logo=data%3Aimage%2Fsvg%2Bxml%3Bbase64%2CPHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAyNCAyNCIgZmlsbD0ibm9uZSIgc3Ryb2tlPSJ3aGl0ZSIgc3Ryb2tlLXdpZHRoPSIyIj48Y2lyY2xlIGN4PSIxMiIgY3k9IjEyIiByPSIxMCIvPjxwYXRoIGQ9Ik0yIDEyaDIwTTEyIDJhMTUgMTUgMCAwIDEgMCAyME0xMiAyYTE1IDE1IDAgMCAwIDAgMjAiLz48L3N2Zz4%3D
-[windows-msi]: https://github.com/tangency-labs/solidcraft/releases/latest/download/solidcraft-windows-x64.msi
-[macos-dmg]: https://github.com/tangency-labs/solidcraft/releases/latest/download/solidcraft-macos-universal.dmg
-[linux-appimage]: https://github.com/tangency-labs/solidcraft/releases/latest/download/solidcraft-linux-x86_64.AppImage
-[snap-store]: https://snapcraft.io/solidcraft
-[web-app]: https://solidcraft.io/app
