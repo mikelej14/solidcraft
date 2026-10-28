@@ -1741,6 +1741,7 @@ pub fn poll(app: &mut SolveApp, ctx: &egui::Context) {
         {
             app.agent_chat.settings.local.runtime.unload();
             app.agent_chat.settings.local.waiting = None;
+            app.agent_chat.settings.local.preparing = None;
             app.agent_chat.settings.local.ready = false;
             if app.agent_chat.agent_id.as_deref() == Some(local_gguf::AGENT_ID) {
                 app.agent_chat.agent_id = None;
