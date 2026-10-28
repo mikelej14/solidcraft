@@ -217,6 +217,28 @@ pub fn entries(app: &crate::SolveApp) -> Vec<Entry> {
         }));
     }
     out.extend(app.preferences.agents.iter().map(Entry::from_config));
+    // The loaded GGUF appears as an ordinary OpenAI-compatible endpoint to
+    // the existing assistant. This entry is transient and is never persisted.
+    #[cfg(not(target_arch = "wasm32"))]
+    if app.agent_chat.settings.local.ready {
+        let local = &app.agent_chat.settings.local.runtime;
+        if let (Some(url), Some(path)) = (&local.endpoint, &local.model_path) {
+            let model = path.file_name().unwrap_or_default().to_string_lossy().into_owned();
+            out.push(Entry {
+                id: super::local_gguf::AGENT_ID.into(),
+                name: "Local GGUF".into(),
+                kind: Kind::Api,
+                argv: Vec::new(),
+                version: None,
+                login: "",
+                found: true,
+                base_url: url.clone(),
+                model,
+                key: false,
+                request_timeout_s: DEFAULT_REQUEST_TIMEOUT_S,
+            });
+        }
+    }
     for entry in &mut out {
         if entry.kind == Kind::Acp
             && let Some(signed_in) = app.agent_chat.login_results.get(&entry.id)
