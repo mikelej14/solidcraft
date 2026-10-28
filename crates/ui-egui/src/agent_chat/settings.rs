@@ -611,7 +611,11 @@ fn local_gguf_section(app: &mut SolveApp, ui: &mut egui::Ui) {
     let mut load = false;
     let mut unload = false;
     ui_kit::settings_section(ui, "local_gguf", "Local GGUF", |ui| {
-        ui_kit::text(ui, "Use a GGUF file directly in SolidCraft's existing assistant. Custom URLs and external providers remain available.", ui_kit::Text::Note("local_gguf_intro"));
+        ui_kit::text(
+            ui,
+            "Use a GGUF file directly in SolidCraft's existing assistant. Custom URLs and external providers remain available.",
+            ui_kit::Text::Note("local_gguf_intro"),
+        );
         ui_kit::settings_short_note(ui, &selected);
         if let Some(active) = &active {
             ui_kit::settings_short_note(ui, active);
