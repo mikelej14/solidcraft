@@ -74,6 +74,23 @@ pub struct State {
     capabilities: std::collections::HashMap<(String, String), Option<bool>>,
     #[cfg(not(target_arch = "wasm32"))]
     checking: Option<CapabilityCheck>,
+    /// Local inference is transient. It never overwrites saved external providers.
+    #[cfg(not(target_arch = "wasm32"))]
+    pub local: LocalState,
+}
+
+/// The native GGUF provider's process and UI, shared by AI settings and the chat.
+#[cfg(not(target_arch = "wasm32"))]
+#[derive(Default)]
+pub struct LocalState {
+    pub selected: Option<std::path::PathBuf>,
+    pub runtime: super::local_gguf::Runtime,
+    /// Only expose this provider to the chat after llama.cpp reports model readiness.
+    pub ready: bool,
+    waiting: Option<std::sync::mpsc::Receiver<Result<(), String>>>,
+    cpu_retried: bool,
+    pub status: String,
+    pub error: Option<String>,
 }
 
 #[cfg(not(target_arch = "wasm32"))]
