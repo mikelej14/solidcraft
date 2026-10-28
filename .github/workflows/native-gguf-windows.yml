@@ -1,0 +1,87 @@
+# Dedicated Windows installer build for the clean native GGUF branch.
+# Creates a downloadable MSI and portable ZIP. Never publishes or merges.
+name: Windows GGUF Installer
+
+on:
+  push:
+    branches:
+      - solidcraft-native-gguf-clean
+    paths:
+      - 'crates/ui-egui/**'
+      - 'apps/solidcraft/**'
+      - 'packaging/windows/**'
+      - 'assets/platforms/windows/**'
+      - 'Cargo.toml'
+      - 'Cargo.lock'
+      - '.github/workflows/native-gguf-windows.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: gguf-installer-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  windows-installer:
+    name: Build Windows x64 MSI and portable ZIP
+    runs-on: windows-latest
+    timeout-minutes: 120
+    env:
+      CARGO_TERM_COLOR: always
+      CARGO_INCREMENTAL: "0"
+    steps:
+      - name: Checkout clean native GGUF branch
+        uses: actions/checkout@v4
+      - name: Set up Rust with Windows MSVC target
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-pc-windows-msvc
+          components: rustfmt
+      - name: Cache Rust build outputs
+        uses: Swatinem/rust-cache@v2
+        with:
+          key: solidcraft-native-gguf-msi
+      - name: Format check
+        shell: pwsh
+        run: cargo fmt --all -- --check
+      - name: Type check native assistant
+        shell: pwsh
+        run: cargo check --locked -p solidcraft-ui-egui
+      - name: Tests for local provider and runtime
+        shell: pwsh
+        run: |
+          cargo test --locked -p solidcraft-ui-egui local_gguf -- --nocapture
+      - name: Install WiX v5 and extensions
+        shell: pwsh
+        run: |
+          dotnet tool install --global wix --version 5.0.2
+          wix extension add -g WixToolset.UI.wixext/5.0.2 WixToolset.Util.wixext/5.0.2
+      - name: Build and package MSI and ZIP
+        shell: pwsh
+        run: ./packaging/windows/package.ps1 -Arch x64
+      - name: Check that the GGUF runtime is inside the Windows packages
+        shell: pwsh
+        run: |
+          $msi = Get-ChildItem dist/release/*.msi | Select-Object -First 1
+          $zip = Get-ChildItem dist/release/*portable.zip | Select-Object -First 1
+          if (!$msi -or !$zip) { throw 'Missing installer output' }
+          if ($msi.Length -lt 1000000) { throw 'MSI is suspiciously small' }
+          Add-Type -AssemblyName System.IO.Compression
+          $archive = [System.IO.Compression.ZipFile]::OpenRead($zip.FullName)
+          try {
+            $names = @($archive.Entries | ForEach-Object { $_.FullName })
+            if (!($names -match 'local-gguf.zip')) { throw 'Portable ZIP is missing GGUF runtime' }
+            if (!($names -match 'LLAMA-CPP-LICENSE.txt')) { throw 'Portable ZIP is missing llama.cpp license' }
+          } finally { $archive.Dispose() }
+      - name: Upload Windows installer and portable package
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: SolidCraft-Native-GGUF-Windows-x64
+          path: |
+            dist/release/*.msi
+            dist/release/*portable.zip
+          if-no-files-found: error
+          retention-days: 30
