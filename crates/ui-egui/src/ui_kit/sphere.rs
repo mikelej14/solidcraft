@@ -175,6 +175,67 @@ pub fn sphere_thumbnail(ui: &mut Ui, id: &str, sphere: Sphere, size: f32) -> Res
     response
 }
 
+/// Inspector sample card. Content, chips and action reuse the kit's existing
+/// controls; dimensions and the bordered card belong here rather than callers.
+#[cfg(test)]
+pub(crate) fn sphere_preview<R>(ui: &mut Ui, id: &str, sphere: Sphere, name: &str, chips: [&str; 2], action: impl FnOnce(&mut Ui) -> R) -> R {
+    sphere_preview_with_source(ui, id, sphere, name, chips[1], |ui| super::text(ui, chips[0], super::Text::Inline), action)
+}
+
+/// Sample card with an interactive source tag (for example an inheritance menu).
+/// Keeps the standard sphere, two-line caption, usage chip and trailing action.
+/// Tokens and dimensions are identical to the plain sample card.
+pub(crate) fn sphere_preview_with_source<R>(
+    ui: &mut Ui,
+    id: &str,
+    sphere: Sphere,
+    name: &str,
+    usage: &str,
+    source: impl FnOnce(&mut Ui) -> Response,
+    action: impl FnOnce(&mut Ui) -> R,
+) -> R {
+    let t = Tokens::get();
+    super::reports::list_frame_filled(ui, id, t.dialog_footer, t.space_10, |ui| {
+        let row = ui.horizontal(|ui| {
+            let side = t.control_height * 2.0 - t.space_8;
+            sphere_thumbnail(ui, id, sphere, side);
+            let text_width = (ui.available_width() - t.control_height - t.space_16).max(0.0);
+            ui.allocate_ui_with_layout(vec2(text_width, side), egui::Layout::top_down(egui::Align::Min), |ui| {
+                ui.spacing_mut().item_spacing.y = t.space_4;
+                ui.add_sized(
+                    vec2(text_width, t.space_16),
+                    egui::Label::new(egui::RichText::new(name).font(crate::fonts::semibold(t.font_label)).color(t.form_ink))
+                        .truncate()
+                        .halign(egui::Align::Min),
+                )
+                .on_hover_text(name);
+                let (line, _) = ui.allocate_exact_size(vec2(text_width, t.control_height), Sense::hover());
+                let usage_width = (ui.painter().layout_no_wrap(usage.to_owned(), egui::FontId::proportional(t.font_caption), t.form_ink).size().x
+                    + t.space_12)
+                    .min((text_width - t.space_24 - t.space_8).max(0.0));
+                let usage_rect = Rect::from_min_max(pos2(line.right() - usage_width, line.top()), line.max);
+                let source_rect = Rect::from_min_max(line.min, pos2((usage_rect.left() - t.space_4).max(line.left()), line.bottom()));
+                let mut source_ui = ui.new_child(
+                    egui::UiBuilder::new().id_salt("sample_source").max_rect(source_rect).layout(egui::Layout::left_to_right(egui::Align::Center)),
+                );
+                source_ui.set_clip_rect(ui.clip_rect().intersect(source_rect));
+                let source = source(&mut source_ui);
+                scenario::publish_rect(&format!("{id}:chip:0"), source.rect.intersect(source_rect));
+                let mut usage_ui = ui.new_child(
+                    egui::UiBuilder::new().id_salt("sample_usage").max_rect(usage_rect).layout(egui::Layout::left_to_right(egui::Align::Center)),
+                );
+                usage_ui.set_clip_rect(ui.clip_rect().intersect(usage_rect));
+                let response = super::workspace_chip(&mut usage_ui, usage);
+                scenario::publish_rect(&format!("{id}:chip:1"), response.rect.intersect(usage_rect));
+            });
+            let response = ui.vertical(action);
+            scenario::publish_target(&format!("{id}:replace"), response.response.rect);
+            response.inner
+        });
+        row.inner
+    })
+}
+
 /// A catalog sample: 48 pt sphere in a 56 pt cell, two-line caption and optional
 /// usage badge. The surrounding chrome follows the active workspace accent.
 pub(crate) struct SphereTile<'a> {

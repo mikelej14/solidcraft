@@ -10,7 +10,7 @@ struct U {
     acc_u: vec4<f32>,  // accessibility map axes (xyz, offset)
     acc_v: vec4<f32>,
     eye: vec4<f32>,    // eye position, w = 1 for perspective (0: orthographic, looking along -back)
-    ao: vec4<f32>,     // radius in world units (zero: disabled)
+    ao: vec4<f32>,     // x: radius in world units (zero: disabled), y: samples per pixel
     // analysis colours (`theme::AnalysisColors`): draft positive, between, negative; reachable,
     // blocked; curvature flat, middle, tight
     ana_c: array<vec4<f32>, 8>,
@@ -333,9 +333,12 @@ fn occlusion(i: TOut) -> f32 {
     // the buffer runs reversed). The map is cleared to its far plane either way, so a texel
     // with nothing in it reads as 1 and the `d < 1.0` test below skips it.
     let flip = reversed();
+    // Fewer samples while the view moves (#7165), spread over the same hemisphere. 32 is the
+    // still picture's count, `AO_SAMPLES` in view.rs.
+    let count = u32(clamp(u.ao.y, 1.0, 32.0));
     var blocked = 0.0;
-    for (var j = 0u; j < 32u; j = j + 1u) {
-        let f = (f32(j) + 0.5) / 32.0;
+    for (var j = 0u; j < count; j = j + 1u) {
+        let f = (f32(j) + 0.5) / f32(count);
         let angle = f32(j) * 2.39996323;
         let direction = t * (cos(angle) * sqrt(f)) + b * (sin(angle) * sqrt(f)) + n * sqrt(1.0 - f);
         let reach = radius * (0.2 + 0.8 * fract(f32(j) * 0.61803399 + 0.5));
@@ -356,7 +359,7 @@ fn occlusion(i: TOut) -> f32 {
             blocked = blocked + smoothstep(0.005, 0.15, delta) * (1.0 - smoothstep(0.5, 1.0, delta));
         }
     }
-    return 1.0 - 0.85 * blocked / 32.0;
+    return 1.0 - 0.85 * blocked / f32(count);
 }
 
 /// How fast the normal turns across the pixel (per mm).

@@ -366,6 +366,22 @@ The ordered list of a design's features, which SolidCraft computes from first to
 - **Elsewhere:** timeline, history, feature tree.
 - **For translators:** not the undo history.
 
+### view angles
+
+The yaw, pitch and roll, in degrees, that give the direction a view looks along and how its
+picture is turned.
+
+Yaw is the heading of the line of sight about the up axis (Front view 0°, Left 90°, Right −90°,
+Back 180°); pitch is how far the eye is above the ground plane (Top view 90°, Bottom −90°); a
+positive roll turns the picture clockwise. They are the camera's own angles, which `view.apply`
+and the MCP camera take in radians.
+
+- **In SolidCraft:** `view.angle_readout` and the View angles readout under the orientation
+  gizmo; the `yaw`, `pitch` and `roll` of `view.apply`'s `camera`.
+- **Don't use:** camera angles, view rotation.
+- **Elsewhere:** view orientation, azimuth and elevation.
+- **For translators:** the view's pitch is a tilt, not a thread's or a pattern's pitch.
+
 ### web browser
 
 A program that shows web pages, such as the one that runs SolidCraft's web build.

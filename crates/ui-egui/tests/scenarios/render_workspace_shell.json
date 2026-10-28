@@ -8,9 +8,10 @@
   {"click":{"handle":"render:stage:light"}},
   {"click":{"handle":"render:stage:frame"}},
   {"click":{"handle":"render:stage:output"}},
+  {"click":{"handle":"render:tree:output"}},
   {"expect":{"disjoint":["render:browser:header","render:tree:environment"]}},
   {"expect":{"disjoint":["render:browser:header","render:appearances:header"]}},
-  {"expect":{"disjoint":["render:inspector:header","render:page:output"]}},
+  {"expect":{"disjoint":["render:inspector:header","render:output-width"]}},
   {"click":{"handle":"render:shots:hide"}},
   {"expect":{"shown_handles":["render:shots:show"],"hidden_handles":["render:shots:hide"]}},
   {"call":"ui.workspace","params":{"workspace":"design"}},
@@ -18,5 +19,6 @@
   {"call":"ui.workspace","params":{"workspace":"render"}},
   {"click":{"handle":"render:shots:show"}},
   {"call":"ui.set","params":{"layout":"docked"}},
-  {"expect":{"shown_handles":["render:shots:hide","render:stage:output","render:page:output"],"hidden_handles":["tab:RENDER"],"errors":0}}
+  {"click":{"handle":"render:tree:output"}},
+  {"expect":{"shown_handles":["render:shots:hide","render:stage:output","render:output-width"],"hidden_handles":["tab:RENDER"],"errors":0}}
 ]

@@ -61,6 +61,7 @@ pub mod drag_extrude;
 pub mod drag_snap;
 pub mod easyprint_ui;
 pub mod edit_clipboard;
+pub mod edit_in_place;
 mod feature_edit;
 #[cfg(test)]
 mod font_literals_tests;
@@ -264,6 +265,7 @@ pub mod space_mouse_calibration;
 pub mod space_mouse_model;
 pub mod space_mouse_offer;
 pub mod stand_up;
+mod status_bar;
 #[cfg(test)]
 mod sweep_dialog_tests;
 pub(crate) mod test_boat;
@@ -284,6 +286,7 @@ pub mod ui_kit;
 mod ui_kit_guard_tests;
 pub mod update;
 mod value_step;
+pub(crate) mod view_angles;
 mod view_confirm;
 pub mod view_pick;
 pub mod viewport;
@@ -514,6 +517,8 @@ pub struct SolveApp {
     /// OK pressed on a feature that takes a while: its evaluation runs off the window thread.
     pub applying: Option<dialogs::Applying>,
     pub(crate) editing_state: Option<dialogs::EditingState>,
+    /// A linked component's design edited in place, with its assembly around it.
+    pub edit_in_place: edit_in_place::EditInPlace,
     pub(crate) pending_feature_edit: Option<feature_edit::PendingFeatureEdit>,
     /// A command recomputing the history (the marker moved, undo) computing off the window
     /// thread, and those asked for meanwhile ([`deferred`]).
@@ -711,6 +716,7 @@ impl SolveApp {
             preview: preview::PreviewState::default(),
             applying: None,
             editing_state: None,
+            edit_in_place: Default::default(),
             pending_feature_edit: None,
             deferred: None,
             deferred_queue: Vec::new(),
@@ -972,6 +978,8 @@ impl SolveApp {
         }
         // Before a design given at start opens: its paths follow the network preferences.
         prefs::apply_network(&self.preferences);
+        // Before a file given at start opens: the largest file it may be (#4086).
+        prefs::apply_file_limits(&self.preferences);
         // Saved before the theme was a preference: the Dark/Light flag says which.
         if v.get("preferences").and_then(|p| p.get("theme")).is_none() {
             self.preferences.theme = if self.ui.dark { "dark" } else { "light" }.into();
@@ -1019,6 +1027,13 @@ impl SolveApp {
 
     /// Host effects shared by directly executed and already evaluated commands.
     pub(crate) fn command_completed(&mut self, id: &str, r: Result<Value, String>) -> Result<Value, String> {
+        // The engine has no edit in place to start or finish; the window does, and says when it can't.
+        let r = match solidcraft_engine::find_command(id).map(|spec| spec.id) {
+            // `queued`: it waits for the end of the agent's turn.
+            Some("component.edit_in_place") => r.and_then(|v| edit_in_place::command_ran(self, &v).map(|queued| with_queued(v, queued))),
+            Some("component.finish_edit") => r.and_then(|v| edit_in_place::finish_command(self).map(|queued| with_queued(v, queued))),
+            _ => r,
+        };
         if let Ok(v) = &r {
             match id {
                 "view.fit" | "view.home" => self.frame_view(id == "view.home"),
@@ -1045,6 +1060,9 @@ impl SolveApp {
                     self.ui.show_navigation_bar = v.get("visible").and_then(Value::as_bool).unwrap_or(!self.ui.show_navigation_bar)
                 }
                 _ => {}
+            }
+            if id == "view.render_inspector" {
+                render_workspace::set_inspector_visible(self, v.get("visible").and_then(Value::as_bool).unwrap_or(true));
             }
             if id == "view.render_browser" {
                 render_workspace::apply_browser_controls(self, v);
@@ -1139,6 +1157,9 @@ impl SolveApp {
             {
                 self.ui.perspective = perspective;
             }
+            if id == "view.angle_readout" {
+                self.preferences.show_view_angles = v.get("enabled").and_then(Value::as_bool).unwrap_or(false);
+            }
             if matches!(id, "view.ambient_occlusion" | "view.graphics_preset") {
                 self.preferences.ambient_occlusion = v.get("enabled").and_then(Value::as_bool).unwrap_or(false);
                 if id == "view.graphics_preset" {
@@ -1190,6 +1211,7 @@ impl SolveApp {
                 }
                 if matches!(id, "file.new" | "doc.open" | "doc.recover") {
                     documents::reset_chat(self);
+                    self.edit_in_place.active = None;
                     render_workspace::reset_document(self);
                     dim_view::cancel();
                     self.menu.props = None;
@@ -1286,6 +1308,20 @@ impl SolveApp {
             }
             return;
         }
+        // A drawing tool on the SKETCH tab kept shown outside a sketch (#7904) starts Create
+        // Sketch, on the selected plane or planar face or else on the plane picked next, and then
+        // the tool, as the tool's shortcut does outside a sketch (`keymap::press`).
+        if workspace::starts_a_sketch(self, id)
+            && let Some(then) = solidcraft_engine::find_command(id).map(|c| c.id)
+        {
+            self.start("sketch.create");
+            if let Some(d) = self.dialog.as_mut().filter(|d| matches!(d.kind, dialogs::Kind::Sketch)) {
+                d.then_start = Some(then);
+            }
+            // The ribbon stays on SKETCH while the plane is picked, not on Create Sketch's MODEL.
+            self.ui.tab = "SKETCH".into();
+            return;
+        }
         // A disabled command starts nothing, however it was reached. The toolbar greys its
         // button, but a shortcut, the command palette and the control channel all land here.
         // Its reason goes to the status line, so the refusal is never silent.
@@ -1320,6 +1356,10 @@ impl SolveApp {
         if id == "material.properties.validate" {
             self.material_card_review = Some(material_card_review::ReviewWindow::default());
             self.home.open = false;
+            return;
+        }
+        if id == "library.export" {
+            dialogs_library::start_export(self);
             return;
         }
         // A display toggle leaves the current modelling tool and camera in place.
@@ -1361,6 +1401,10 @@ impl SolveApp {
             let _ = self.run(id, json!({"enabled": !self.ui.perspective}));
             return;
         }
+        if id == "view.angle_readout" {
+            let _ = self.run(id, json!({"enabled": !self.preferences.show_view_angles}));
+            return;
+        }
         // Another command ends Edit Text (its dialog is not a feature edit to keep).
         sketch_text_move::cancel_drag(self);
         if sketch_text::editing(self) || self.dialog.as_ref().is_some_and(|d| matches!(d.kind, dialogs::Kind::TextMove(_))) {
@@ -1383,6 +1427,10 @@ impl SolveApp {
         if dialogs_sheet::start_export(self, id) {
             return;
         }
+        if id == "component.finish_edit" {
+            edit_in_place::finish(self);
+            return;
+        }
         // The picked drawing is placed (position and scale, previewed) before OK adds it.
         if let Some(ext) = id.strip_prefix("sketch.insert_").filter(|e| matches!(*e, "dxf" | "svg")) {
             let command = id.to_string();
@@ -1392,6 +1440,13 @@ impl SolveApp {
                 }
             });
             return;
+        }
+        if id == "component.update_links" && self.edit_in_place.active.is_some() {
+            // In a part edited in place it also refreshes the assembly around it.
+            edit_in_place::refresh(self);
+            if self.session.doc.links.is_empty() {
+                return;
+            }
         }
         if id == "component.update_links" && !self.session.doc.links.is_empty() {
             // Reading the linked designs again takes a while in a large assembly: off the window
@@ -2132,7 +2187,12 @@ impl SolveApp {
         render_workspace::tick(self, ctx);
         file_load::tick(self, ctx);
         save_job::tick(self, false);
-        if self.saving.is_some() {
+        edit_in_place::tick(self);
+        let typing = ctx.egui_wants_keyboard_input();
+        if ctx.input(|i| i.pointer.button_clicked(egui::PointerButton::Extra1) || (i.key_pressed(egui::Key::BrowserBack) && !typing)) {
+            edit_in_place::back(self);
+        }
+        if self.saving.is_some() || self.edit_in_place.refreshing() {
             ctx.request_repaint_after(std::time::Duration::from_millis(16));
         }
         open_meshing::tick(self, ctx);
@@ -2179,6 +2239,8 @@ impl SolveApp {
         open_elsewhere::tick(self, ctx);
         update::tick(self, ctx);
         if self.issue_report.draft.is_none() && self.file_picker.is_none() {
+            // Files dropped on the theme Import tile are themes (#8226).
+            prefs::take_theme_drops(self, ctx);
             // Files dropped on the agent chat attach to its next message instead.
             agent_chat::take_drops(self, ctx);
             for f in ctx.input(|i| i.raw.dropped_files.clone()) {
@@ -2322,6 +2384,8 @@ impl SolveApp {
                 return;
             }
         }
+        // The status bar first: it spans the window's width below History and the side panels.
+        status_bar::show(self, ui);
         let floating = render_workspace::active(self) || ui_kit::Container::new(ui.ctx(), ui_kit::Surface::Panel).floating();
         timeline::follow_view_pick(self);
         render_ui::focus_shortcut(self, ui);
@@ -2553,9 +2617,12 @@ impl SolveApp {
 
     fn issue_screenshots(&mut self, ctx: &egui::Context) {
         let now = now_ms();
+        // A view that just moved is drawn with fewer AO samples: shoot the full-quality frame
+        // that follows (#7165), or after half a second a view that keeps moving as it is.
+        let settled = viewport::ao_settled(self, ctx);
         self.queued_shots.retain_mut(|(token, at, frames)| {
             *frames += 1;
-            if now >= *at && *frames >= 3 {
+            if now >= *at && *frames >= 3 && (settled || now >= *at + 500.0) {
                 ctx.send_viewport_cmd(egui::ViewportCommand::Screenshot(egui::UserData::new(*token)));
                 false
             } else {
@@ -2623,6 +2690,14 @@ impl SolveApp {
 /// shown: the screenshot deadline still ends a wait for a frame that never comes.
 fn window_hidden(ctx: &egui::Context) -> bool {
     ctx.input(|i| i.viewport().visible()) == Some(false)
+}
+
+/// An edit in place command's result, saying when it waits for the end of the agent's turn.
+fn with_queued(mut result: Value, queued: bool) -> Value {
+    if queued && let Some(o) = result.as_object_mut() {
+        o.insert("queued".into(), Value::Bool(true));
+    }
+    result
 }
 
 /// A command's name as people see it (its label), for the status bar.

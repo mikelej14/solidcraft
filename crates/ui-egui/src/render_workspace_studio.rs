@@ -169,6 +169,7 @@ pub(super) fn lens_controls(app: &mut SolveApp, ui: &mut egui::Ui) {
     }
 }
 
+#[cfg(test)]
 pub(super) fn controls(app: &mut SolveApp, ui: &mut egui::Ui) {
     finishing_controls(app, ui);
     lens_controls(app, ui);

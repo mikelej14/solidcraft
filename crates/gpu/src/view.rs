@@ -908,6 +908,14 @@ pub struct GpuImage {
 /// Image vertex: position (3 × f32), uv (2 × f32), opacity (f32).
 const IMG_SIZE: usize = 24;
 
+/// Ambient occlusion samples per shaded pixel in a still picture (the shader's most).
+pub const AO_SAMPLES: u32 = 32;
+
+/// Ambient occlusion samples per shaded pixel while the view moves (#7165): a quarter of the
+/// still picture's, on the same turned pattern, so orbiting costs less and shows no copies of
+/// nearby parts (#4167).
+pub const AO_SAMPLES_MOVING: u32 = 8;
+
 /// Per-frame parameters.
 pub struct Frame {
     /// Product preview uses its own batches, retaining the Design viewport's uploads.
@@ -950,6 +958,9 @@ pub struct Frame {
     pub eye: [f32; 4],
     /// World-space occlusion radius; zero skips the depth prepass and all AO sampling.
     pub ao_radius: f32,
+    /// Occlusion samples per shaded pixel: [`AO_SAMPLES`] for a still picture,
+    /// [`AO_SAMPLES_MOVING`] while the view moves (#7165).
+    pub ao_samples: u32,
     /// Supersampling (#1288): draw the frame this many times the viewport's pixels in each
     /// direction and filter it down (1: off). Under 1 the frame is drawn smaller and filtered up
     /// (the product preview past its pixel budget, #1464).
@@ -3190,6 +3201,7 @@ fn frame_key(cb: &Frame) -> u64 {
     cb.selection_tint.map(f32::to_bits).hash(&mut h);
     cb.outline.hash(&mut h);
     cb.ao_radius.to_bits().hash(&mut h);
+    cb.ao_samples.hash(&mut h);
     cb.ssaa.to_bits().hash(&mut h);
     for img in &cb.images {
         img.id.hash(&mut h);
@@ -3614,6 +3626,7 @@ impl Renderer {
         pass.set_bind_group(0, scene_bind(pv, &res.bind), &[]);
         tris(pass, &res.ghost, &pv.ghost);
         pass.set_bind_group(0, scene_bind(m, &res.bind), &[]);
+        tris(pass, &res.ghost, &m.ghost);
         tris(pass, &res.trans, &m.shadow);
         if phase == Phase::BeforeSeeThrough {
             return;
@@ -4000,7 +4013,7 @@ pub fn uniform_bytes(cb: &Frame, w: f32, h: f32, linear: bool, reversed: bool) -
         None => v.extend([0.0; 8]),
     }
     v.extend(cb.eye);
-    v.extend([cb.ao_radius, 0.0, 0.0, 0.0]);
+    v.extend([cb.ao_radius, cb.ao_samples.clamp(1, AO_SAMPLES) as f32, 0.0, 0.0]);
     v.extend(cb.analysis_colors);
     v.extend([if reversed { 1.0 } else { 0.0 }, FACE_STEPS as f32, FACE_SLOPE, 0.0]);
     v.extend([cb.hover_tint[0], cb.hover_tint[1], cb.hover_tint[2], 0.0]);
@@ -4166,6 +4179,25 @@ mod tests {
         naga::valid::Validator::new(naga::valid::ValidationFlags::all(), naga::valid::Capabilities::empty()).validate(&module).unwrap();
     }
 
+    /// The ambient occlusion sample count rides in the uniform's `ao.y`, beside the radius, kept
+    /// within the 1 to 32 samples the shader draws (#7165).
+    #[test]
+    fn ambient_occlusion_samples_follow_the_radius_in_the_uniform() {
+        let samples_sent = |samples: u32| {
+            let mut f = cached_frame();
+            f.ao_radius = 123.5;
+            f.ao_samples = samples;
+            let bytes = super::uniform_bytes(&f, 64.0, 64.0, false, false);
+            let v: Vec<f32> = bytes.as_chunks::<4>().0.iter().map(|c| f32::from_le_bytes(*c)).collect();
+            let radius = v.iter().position(|&x| x == 123.5).unwrap();
+            v[radius + 1]
+        };
+        assert_eq!(samples_sent(super::AO_SAMPLES), 32.0);
+        assert_eq!(samples_sent(super::AO_SAMPLES_MOVING), 8.0);
+        assert_eq!(samples_sent(0), 1.0, "at least one sample");
+        assert_eq!(samples_sent(1000), 32.0, "at most the shader's 32");
+    }
+
     /// A frame with a fixed picture, and a key that names everything it shows.
     fn cached_frame() -> super::Frame {
         use std::sync::{Arc, Mutex};
@@ -4195,6 +4227,7 @@ mod tests {
             outline: false,
             eye: [0.0; 4],
             ao_radius: 0.0,
+            ao_samples: crate::view::AO_SAMPLES,
             ssaa: 1.0,
         }
     }
@@ -4238,6 +4271,8 @@ mod tests {
             ("selection tint", key(|f| f.selection_tint = [0.4, 0.5, 0.6])),
             ("outline", key(|f| f.outline = true)),
             ("ambient occlusion", key(|f| f.ao_radius = 1.0)),
+            // The settled view's full count replaces the moving view's picture (#7165).
+            ("ambient occlusion samples", key(|f| f.ao_samples = super::AO_SAMPLES_MOVING)),
             ("supersampling", key(|f| f.ssaa = 2.0)),
             ("image", key(|f| f.images.push(image(1)))),
             ("image pixels", key(|f| f.images.push(image(2)))),
@@ -4517,6 +4552,7 @@ mod glass_tests {
             outline: false,
             eye: [0.0, 0.0, 100.0, 0.0],
             ao_radius: 0.0,
+            ao_samples: crate::view::AO_SAMPLES,
             ssaa: 1.0,
             hover_tint: [0.0; 3],
             selection_tint: [0.0; 3],
@@ -4690,6 +4726,7 @@ mod glass_tests {
             outline: false,
             eye: [0.0, 0.0, 100.0, 0.0],
             ao_radius: 0.0,
+            ao_samples: crate::view::AO_SAMPLES,
             ssaa,
         }
     }

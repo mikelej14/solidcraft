@@ -279,7 +279,16 @@ pub(crate) fn render_offscreen(
         back,
         eye,
         size,
-        Offscreen { tess, product: false, srgb: false, analysis, analysis_colors: colors, ssaa: 1.0, ao_radius: 0.0 },
+        Offscreen {
+            tess,
+            product: false,
+            srgb: false,
+            analysis,
+            analysis_colors: colors,
+            ssaa: 1.0,
+            ao_radius: 0.0,
+            ao_samples: solidcraft_gpu::view::AO_SAMPLES,
+        },
     )
 }
 
@@ -300,7 +309,16 @@ pub(crate) fn render_product_offscreen(
         back,
         eye,
         size,
-        Offscreen { tess: None, product: true, srgb, analysis: [0.0; 8], analysis_colors: [0.0; 36], ssaa: 1.0, ao_radius: 0.0 },
+        Offscreen {
+            tess: None,
+            product: true,
+            srgb,
+            analysis: [0.0; 8],
+            analysis_colors: [0.0; 36],
+            ssaa: 1.0,
+            ao_radius: 0.0,
+            ao_samples: solidcraft_gpu::view::AO_SAMPLES,
+        },
     )
 }
 
@@ -313,6 +331,7 @@ struct Offscreen<'a> {
     analysis_colors: [f32; 36],
     ssaa: f32,
     ao_radius: f32,
+    ao_samples: u32,
 }
 
 /// [`render_offscreen`] of a scene supersampled `ssaa` times (1: off).
@@ -332,11 +351,21 @@ pub(crate) fn render_offscreen_ssaa(
         back,
         eye,
         size,
-        Offscreen { tess: None, product: false, srgb: false, analysis: [0.0; 8], analysis_colors: [0.0; 36], ssaa, ao_radius: 0.0 },
+        Offscreen {
+            tess: None,
+            product: false,
+            srgb: false,
+            analysis: [0.0; 8],
+            analysis_colors: [0.0; 36],
+            ssaa,
+            ao_radius: 0.0,
+            ao_samples: solidcraft_gpu::view::AO_SAMPLES,
+        },
     )
 }
 
-/// [`render_offscreen`] of a scene with ambient occlusion of `ao_radius` (world units; 0: off).
+/// [`render_offscreen`] of a scene with ambient occlusion of `ao_radius` (world units; 0: off),
+/// `ao_samples` samples per pixel.
 #[cfg(all(test, not(target_arch = "wasm32")))]
 pub(crate) fn render_offscreen_ao(
     scene: GpuScene,
@@ -345,6 +374,7 @@ pub(crate) fn render_offscreen_ao(
     eye: [f32; 4],
     size: u32,
     ao_radius: f32,
+    ao_samples: u32,
 ) -> Option<Vec<u8>> {
     offscreen(
         scene,
@@ -353,7 +383,7 @@ pub(crate) fn render_offscreen_ao(
         back,
         eye,
         size,
-        Offscreen { tess: None, product: false, srgb: false, analysis: [0.0; 8], analysis_colors: [0.0; 36], ssaa: 1.0, ao_radius },
+        Offscreen { tess: None, product: false, srgb: false, analysis: [0.0; 8], analysis_colors: [0.0; 36], ssaa: 1.0, ao_radius, ao_samples },
     )
 }
 
@@ -367,7 +397,7 @@ fn offscreen(
     size: u32,
     options: Offscreen<'_>,
 ) -> Option<Vec<u8>> {
-    let Offscreen { tess, product, srgb, analysis, analysis_colors, ssaa, ao_radius } = options;
+    let Offscreen { tess, product, srgb, analysis, analysis_colors, ssaa, ao_radius, ao_samples } = options;
     let (adapter, device, queue) = offscreen_device()?;
     eprintln!("offscreen adapter: {:?}", adapter.get_info().backend);
     let format = if srgb { wgpu::TextureFormat::Rgba8UnormSrgb } else { wgpu::TextureFormat::Rgba8Unorm };
@@ -400,6 +430,7 @@ fn offscreen(
         outline: false,
         eye,
         ao_radius,
+        ao_samples,
         ssaa,
         hover_tint: [0.0; 3],
         selection_tint: [0.0; 3],

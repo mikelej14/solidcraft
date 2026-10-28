@@ -96,6 +96,11 @@ libc = "0.2"
 
 [target.'cfg(all(unix, not(target_os = "macos")))'.dependencies]
 winit = { version = "0.30", default-features = false, features = ["x11"] }
+# Bringing the window forward on X11 when a close asks about unsaved designs (src/come_forward.rs):
+# the window's id, and the window manager request winit doesn't send (MIT OR Apache-2.0; both
+# already in the tree through eframe and winit).
+raw-window-handle = "0.6"
+x11rb = { version = "0.13", default-features = false }
 
 [build-dependencies]
 embed-resource = "3.0.11"

@@ -16,25 +16,37 @@ use serde_json::{Map, Value, json};
 use sha2::{Digest, Sha256};
 use solidcraft_doc::{Document, FeatureKind, MeshData};
 
-use crate::{IoError, MAX_DESIGN_BYTES, Result, design_metadata::replace};
+use crate::{IoError, Result, design_metadata::replace};
 
 const VERSION: &str = "solidcraft-container/1";
 const LEGACY_VERSION: &str = "solvecraft-container/1";
 const PREVIEW_VERSION: &str = "solidcraft-preview/1";
 const MAX_ENTRIES: usize = 10_000;
+/// The design file limit in force ([`crate::limits`]): the largest design file read or saved.
+fn max_design() -> usize {
+    crate::limits::max_design_bytes()
+}
 /// An embedded STEP source may be as large as an import accepts. It is always stored
-/// Deflate-compressed, so the file itself stays within [`MAX_DESIGN_BYTES`] (#3221).
-const MAX_STEP_PART: usize = crate::MAX_STEP_BYTES;
+/// Deflate-compressed, so the file itself stays within the design file limit (#3221).
+fn max_step_part() -> usize {
+    crate::limits::max_step_bytes()
+}
 /// Deflate level for STEP sources. Level 1 uses fixed Huffman codes: a 270 MiB STEP export
 /// shrank to 70 MB in 1.6 s, at level 2 to 47 MB in 3.1 s; higher levels gain little more.
 const STEP_LEVEL: i64 = 2;
 /// An embedded mesh may be as large as a STEP source. One bigger than the design file is
 /// stored Deflate-compressed, so a compressible large import can be saved (#6600). The file
-/// itself stays within [`MAX_DESIGN_BYTES`].
-const MAX_MESH_PART: usize = crate::MAX_STEP_BYTES;
+/// itself stays within the design file limit.
+fn max_mesh_part() -> usize {
+    crate::limits::max_step_bytes()
+}
 /// Every other part is bounded by the file size limit.
-const MAX_PART: usize = MAX_DESIGN_BYTES;
-const MAX_EXPANDED: usize = MAX_STEP_PART + MAX_DESIGN_BYTES;
+fn max_part() -> usize {
+    max_design()
+}
+fn max_expanded() -> usize {
+    max_step_part().saturating_add(max_design())
+}
 const MESH_MAGIC: &[u8; 8] = b"SCMESH01";
 const MAX_PREVIEW_BYTES: usize = 8 << 20;
 const MAX_PREVIEW_TRIANGLES: usize = 100_000;
@@ -81,11 +93,11 @@ struct PackageWriter {
 /// design file because they are stored compressed when they would not fit otherwise.
 fn part_limit(name: &str) -> usize {
     if name.ends_with(".step") {
-        MAX_STEP_PART
+        max_step_part()
     } else if name.ends_with(".mesh") {
-        MAX_MESH_PART
+        max_mesh_part()
     } else {
-        MAX_PART
+        max_part()
     }
 }
 
@@ -104,14 +116,18 @@ impl PackageWriter {
             return Ok(());
         }
         self.expanded = self.expanded.checked_add(bytes.len()).ok_or_else(|| invalid("expanded size overflow"))?;
-        if self.expanded > MAX_EXPANDED || self.names.len() > MAX_ENTRIES {
+        if self.expanded > max_expanded() || self.names.len() > MAX_ENTRIES {
             return Err(invalid("package too large"));
         }
         let method = if compressed { zip::CompressionMethod::Deflated } else { zip::CompressionMethod::Stored };
         // A mesh past the file limit uses the STEP level: level 1 of a large payload leaves
         // more on disk, and this part exists only because compression is what makes it fit.
-        let level = if name.ends_with(".step") || (name.ends_with(".mesh") && bytes.len() > MAX_PART) { STEP_LEVEL } else { 1 };
-        let options = zip::write::SimpleFileOptions::default().compression_method(method).compression_level(compressed.then_some(level));
+        let level = if name.ends_with(".step") || (name.ends_with(".mesh") && bytes.len() > max_part()) { STEP_LEVEL } else { 1 };
+        // A part of 4 GiB or more (only with a raised file limit, #4086) needs a ZIP64 entry.
+        let options = zip::write::SimpleFileOptions::default()
+            .compression_method(method)
+            .compression_level(compressed.then_some(level))
+            .large_file(bytes.len() as u64 >= u64::from(u32::MAX));
         self.zip.start_file(name, options).map_err(invalid)?;
         self.zip.write_all(bytes).map_err(invalid)
     }
@@ -128,11 +144,11 @@ impl PackageWriter {
         // The bytes written so far, plus what the open compressed part may still hold back.
         let written = self.zip.get_ref().map_or(usize::MAX, |c| c.get_ref().len()).saturating_add(1 << 20);
         let directory = self.names.len().saturating_add(entries).saturating_mul(256).saturating_add(65_536);
-        budget.saturating_sub(written.saturating_add(directory)).min(MAX_EXPANDED.saturating_sub(self.expanded))
+        budget.saturating_sub(written.saturating_add(directory)).min(max_expanded().saturating_sub(self.expanded))
     }
     fn blob(&mut self, bytes: &[u8], extension: &str, compressed: bool) -> Result<Value> {
         self.resolved =
-            self.resolved.checked_add(bytes.len()).filter(|&n| n <= MAX_EXPANDED).ok_or_else(|| invalid("resolved payloads too large"))?;
+            self.resolved.checked_add(bytes.len()).filter(|&n| n <= max_expanded()).ok_or_else(|| invalid("resolved payloads too large"))?;
         let name = format!("blobs/{}.{extension}", digest(bytes));
         self.part(&name, bytes, compressed)?;
         Ok(Value::String(name))
@@ -176,25 +192,28 @@ const STEP_RESERVE: usize = 4 << 20;
 /// accepts, and, compressed as a save stores it, leave room in a design file for the rest of
 /// the design. Checked when the file is imported, so it never imports and then fails to save.
 pub fn check_step_storable(step: &str) -> Result<()> {
-    let limit = MAX_DESIGN_BYTES - STEP_RESERVE;
-    if step.len() > MAX_STEP_PART {
-        return Err(IoError::Invalid(format!("STEP file too large ({} MB, limit {} MB)", step.len() >> 20, MAX_STEP_PART >> 20)));
-    }
+    let limit = max_design().saturating_sub(STEP_RESERVE);
+    crate::limits::check(crate::limits::Kind::Step, step.len() as u64).map_err(|e| IoError::Invalid(format!("STEP {e}")))?;
     // Deflate adds at most a few bytes per 16 KiB block: smaller text always fits.
     if step.len() <= limit - (limit >> 10) {
         return Ok(());
     }
     let mut zip = zip::ZipWriter::new(Measure::default());
-    let options = zip::write::SimpleFileOptions::default().compression_method(zip::CompressionMethod::Deflated).compression_level(Some(STEP_LEVEL));
+    let options = zip::write::SimpleFileOptions::default()
+        .compression_method(zip::CompressionMethod::Deflated)
+        .compression_level(Some(STEP_LEVEL))
+        .large_file(step.len() as u64 >= u64::from(u32::MAX));
     zip.start_file("blobs/source.step", options).map_err(invalid)?;
     zip.write_all(step.as_bytes()).map_err(invalid)?;
     let compressed = usize::try_from(zip.finish().map_err(invalid)?.length).unwrap_or(usize::MAX);
     if compressed > limit {
         return Err(IoError::Invalid(format!(
-            "STEP file too large to save in a design: {} MB of STEP text compresses to {} MB, over the {} MB a design file may hold",
+            "STEP file too large to save in a design: {} MB of STEP text compresses to {} MB, over the {} MB a design file may hold. \
+             The design file limit counts here too: {}",
             step.len() >> 20,
             compressed >> 20,
-            limit >> 20
+            limit >> 20,
+            crate::limits::how_to_raise()
         )));
     }
     Ok(())
@@ -239,7 +258,7 @@ pub fn write_design_container_with_thumbnail(
     geometry: Option<&solidcraft_doc::SavedModel>,
     thumbnail: Option<&[u8]>,
 ) -> Result<Vec<u8>> {
-    write_container(doc, compression, preview, geometry, thumbnail, MAX_DESIGN_BYTES)
+    write_container(doc, compression, preview, geometry, thumbnail, max_design())
 }
 
 /// [`write_design_container_with_thumbnail`] within `budget` bytes for the optional caches (the
@@ -269,7 +288,7 @@ fn write_container(
                     let bytes = encode_mesh(mesh)?;
                     // Fast saves store a mesh that fits. One past the file limit is deflated,
                     // or it could never be saved (#6600). Compact deflates every mesh.
-                    let compress = compression == DesignCompression::Compact || bytes.len() > MAX_PART;
+                    let compress = compression == DesignCompression::Compact || bytes.len() > max_part();
                     let blob = writer.blob(&bytes, "mesh", compress)?;
                     let mut value = replace(mesh, fields([("positions", json!([])), ("triangles", json!([]))])).map_err(invalid)?;
                     value.as_object_mut().ok_or_else(|| invalid("mesh metadata"))?.insert("mesh_blob".into(), blob);
@@ -335,8 +354,13 @@ fn write_container(
         thumbnail::write(&mut writer, png, &metadata)?;
     }
     let bytes = writer.finish()?;
-    if bytes.len() > MAX_DESIGN_BYTES {
-        return Err(invalid(format!("the design would be {} MB, over the {} MB a design file may hold", bytes.len() >> 20, MAX_DESIGN_BYTES >> 20)));
+    if bytes.len() > max_design() {
+        return Err(invalid(format!(
+            "the design would be {} MB, over the {} MB a design file may hold. {}",
+            bytes.len() >> 20,
+            max_design() >> 20,
+            crate::limits::how_to_raise()
+        )));
     }
     Ok(bytes)
 }
@@ -352,13 +376,13 @@ fn validate_mesh(mesh: &MeshData) -> Result<()> {
     Ok(())
 }
 
-/// Encoded blob length, or `None` when it would pass [`MAX_MESH_PART`] or overflow.
+/// Encoded blob length, or `None` when it would pass the mesh part limit or overflow.
 fn mesh_encoded_len(positions: usize, triangles: usize) -> Option<usize> {
     positions
         .checked_mul(8)
         .and_then(|v| triangles.checked_mul(4).and_then(|t| v.checked_add(t)))
         .and_then(|v| v.checked_add(24))
-        .filter(|&n| n <= MAX_MESH_PART)
+        .filter(|&n| n <= max_mesh_part())
 }
 
 fn encode_mesh(mesh: &MeshData) -> Result<Vec<u8>> {
@@ -410,9 +434,7 @@ struct PackageReader<R: Read + Seek> {
 impl<R: Read + Seek> PackageReader<R> {
     fn new(mut source: R) -> Result<Self> {
         let length = source.seek(SeekFrom::End(0)).map_err(invalid)?;
-        if length > MAX_DESIGN_BYTES as u64 {
-            return Err(invalid("compressed file too large"));
-        }
+        crate::limits::check(crate::limits::Kind::Design, length).map_err(invalid)?;
         let tail_length = length.min(65_557) as usize;
         source.seek(SeekFrom::Start(length - tail_length as u64)).map_err(invalid)?;
         let mut tail = vec![0; tail_length];
@@ -457,7 +479,7 @@ impl<R: Read + Seek> PackageReader<R> {
             }
             total = total.checked_add(part.size()).ok_or_else(|| invalid("expanded size overflow"))?;
             let limit = part_limit(&name);
-            if part.size() > limit as u64 || total > MAX_EXPANDED as u64 {
+            if part.size() > limit as u64 || total > max_expanded() as u64 {
                 return Err(invalid("expanded package too large"));
             }
         }
@@ -514,7 +536,7 @@ impl<R: Read + Seek> PackageReader<R> {
         // Count repeated references too: a tiny archive must not expand into unbounded
         // owned document strings/arrays when the same blob is referenced repeatedly.
         self.hydrated =
-            self.hydrated.checked_add(bytes.len()).filter(|&n| n <= MAX_EXPANDED).ok_or_else(|| invalid("resolved payloads too large"))?;
+            self.hydrated.checked_add(bytes.len()).filter(|&n| n <= max_expanded()).ok_or_else(|| invalid("resolved payloads too large"))?;
         Ok(bytes)
     }
 }
@@ -550,7 +572,7 @@ fn encode_preview(preview: &DesignPreview, document: &[u8]) -> Result<(Vec<u8>, 
 /// Read only an optional provisional display cache; any corruption/incompatibility is a miss.
 /// The normal design reader must still validate and rebuild before enabling the design.
 pub fn read_design_preview(bytes: &[u8]) -> Option<DesignPreview> {
-    if bytes.len() > MAX_DESIGN_BYTES || !is_design_container(bytes) {
+    if bytes.len() > max_design() || !is_design_container(bytes) {
         return None;
     }
     DesignContainerReader::new(Cursor::new(bytes)).ok()?.preview()
@@ -676,7 +698,7 @@ pub fn read_design_file(path: &str, notify: Option<impl FnOnce(DesignPreview)>) 
         Ok((reader.read_document()?, model))
     } else {
         let mut bytes = Vec::new();
-        source.take(MAX_DESIGN_BYTES as u64 + 1).read_to_end(&mut bytes).map_err(invalid)?;
+        source.take((max_design() as u64).saturating_add(1)).read_to_end(&mut bytes).map_err(invalid)?;
         Ok((crate::read_design(&bytes)?, None))
     }
 }
@@ -687,7 +709,7 @@ type FileSource = std::fs::File;
 type FileSource = Cursor<Vec<u8>>;
 
 /// A file to read: inside the folders this process may use, a regular file, and at most
-/// [`MAX_DESIGN_BYTES`], read from its start.
+/// the largest design file allowed (`limits`), read from its start.
 fn open_regular_file(path: &str) -> Result<FileSource> {
     #[cfg(not(target_arch = "wasm32"))]
     let mut source = {
@@ -696,9 +718,7 @@ fn open_regular_file(path: &str) -> Result<FileSource> {
         if !metadata.is_file() {
             return Err(invalid("not a regular file"));
         }
-        if metadata.len() > MAX_DESIGN_BYTES as u64 {
-            return Err(invalid("file too large"));
-        }
+        crate::limits::check(crate::limits::Kind::Design, metadata.len()).map_err(invalid)?;
         let file = std::fs::File::open(path).map_err(invalid)?;
         if !file.metadata().map_err(invalid)?.is_file() {
             return Err(invalid("not a regular file"));
@@ -706,11 +726,9 @@ fn open_regular_file(path: &str) -> Result<FileSource> {
         file
     };
     #[cfg(target_arch = "wasm32")]
-    let mut source = Cursor::new(crate::vfs::read(path, MAX_DESIGN_BYTES).map_err(invalid)?);
+    let mut source = Cursor::new(crate::vfs::read(path, max_design()).map_err(invalid)?);
     let size = source.seek(SeekFrom::End(0)).map_err(invalid)?;
-    if size > MAX_DESIGN_BYTES as u64 {
-        return Err(invalid("file too large"));
-    }
+    crate::limits::check(crate::limits::Kind::Design, size).map_err(invalid)?;
     source.seek(SeekFrom::Start(0)).map_err(invalid)?;
     Ok(source)
 }
@@ -731,7 +749,7 @@ fn read_document<R: Read + Seek>(reader: &mut PackageReader<R>) -> Result<Docume
     if drawing::container_kind(reader)? == FileKind::Drawing {
         return Err(IoError::Invalid("this file is a SolidCraft drawing, not a design: open it as a drawing".into()));
     }
-    let bytes = reader.document(MAX_DESIGN_BYTES)?;
+    let bytes = reader.document(max_design())?;
     check_hdr_manifest(&bytes)?;
     let mut metadata: Value = serde_json::from_slice(&bytes).map_err(invalid)?;
     // HDR's typed JSON representation is deliberately strict: no empty placeholders or
@@ -931,7 +949,7 @@ mod tests {
         }
         impl Seek for Oversized {
             fn seek(&mut self, _: SeekFrom) -> std::io::Result<u64> {
-                Ok(MAX_DESIGN_BYTES as u64 + 1)
+                Ok(crate::MAX_DESIGN_BYTES as u64 + 1)
             }
         }
         assert!(DesignContainerReader::new(Oversized).is_err());
@@ -1081,7 +1099,7 @@ mod tests {
         assert!(read_design_geometry(&bytes).is_none());
         assert_eq!(crate::read_design(&bytes).unwrap().to_json(), doc.to_json());
         // With room for it, the same model is kept.
-        let bytes = write_container(&doc, DesignCompression::Fast, None, Some(&native_geometry()), None, MAX_DESIGN_BYTES).unwrap();
+        let bytes = write_container(&doc, DesignCompression::Fast, None, Some(&native_geometry()), None, crate::MAX_DESIGN_BYTES).unwrap();
         assert!(read_design_geometry(&bytes).is_some());
     }
 
@@ -1570,7 +1588,7 @@ mod tests {
         assert!(crate::read_design(&duplicate).is_err());
         let mut bomb = bytes.clone();
         let central = bomb.windows(4).position(|v| v == b"PK\x01\x02").unwrap();
-        bomb[central + 24..central + 28].copy_from_slice(&((MAX_STEP_PART + 1) as u32).to_le_bytes());
+        bomb[central + 24..central + 28].copy_from_slice(&((max_step_part() + 1) as u32).to_le_bytes());
         assert!(crate::read_design(&bomb).unwrap_err().to_string().contains("expanded package too large"));
         let mut excessive = bytes;
         let end = excessive.windows(4).rposition(|v| v == b"PK\x05\x06").unwrap();
@@ -1623,20 +1641,20 @@ mod tests {
     /// #3221: a STEP file larger than a design part used to import, then fail to save.
     #[test]
     fn step_over_the_part_limit_imports_saves_compressed_and_reopens() {
-        let step = padded_step(MAX_DESIGN_BYTES + (1 << 20), false);
+        let step = padded_step(crate::MAX_DESIGN_BYTES + (1 << 20), false);
         let imported = crate::step_import_feature(step.as_bytes(), "large.step").unwrap();
         drop(step);
         let mut doc = Document::new("Large import");
         doc.add_feature(imported.kind, None).unwrap();
         let bytes = write_design_container(&doc).unwrap();
-        assert!(bytes.len() < MAX_DESIGN_BYTES / 2, "saved {} MB", bytes.len() >> 20);
+        assert!(bytes.len() < crate::MAX_DESIGN_BYTES / 2, "saved {} MB", bytes.len() >> 20);
         let restored = crate::read_design(&bytes).unwrap();
         let (Some(FeatureKind::Import { step: before, .. }), Some(FeatureKind::Import { step: after, .. })) =
             (doc.features.first().map(|f| &f.kind), restored.features.first().map(|f| &f.kind))
         else {
             panic!("the reopened design lost its import");
         };
-        assert!(before.len() > MAX_DESIGN_BYTES && before == after, "the reopened STEP text differs");
+        assert!(before.len() > crate::MAX_DESIGN_BYTES && before == after, "the reopened STEP text differs");
         let reopened = crate::step_import_feature(after.as_bytes(), "large.step").unwrap();
         assert_eq!(reopened.body_names, imported.body_names);
         assert_eq!(reopened.import.bodies.len(), 1);
@@ -1648,10 +1666,10 @@ mod tests {
     fn mesh_larger_than_the_file_saves_compressed_and_reopens() {
         let positions: Arc<[f64]> = Arc::from([0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0, 0.0]);
         let overhead = 24 + positions.len() * 8;
-        let min_indices = (MAX_DESIGN_BYTES - overhead) / 4 + 1;
+        let min_indices = (crate::MAX_DESIGN_BYTES - overhead) / 4 + 1;
         let indices = min_indices.div_ceil(3) * 3;
         let encoded = overhead + indices * 4;
-        assert!(encoded > MAX_DESIGN_BYTES && encoded <= MAX_MESH_PART, "encoded {encoded}");
+        assert!(encoded > crate::MAX_DESIGN_BYTES && encoded <= max_mesh_part(), "encoded {encoded}");
         let mesh = MeshData {
             name: "Large".into(),
             positions: Arc::clone(&positions),
@@ -1662,7 +1680,7 @@ mod tests {
         doc.add_feature(FeatureKind::MeshImport { file: "large.stl".into(), meshes: vec![mesh] }, None).unwrap();
         for compression in [DesignCompression::Fast, DesignCompression::Compact] {
             let bytes = write_design_container_with_compression(&doc, compression).unwrap();
-            assert!(bytes.len() < MAX_DESIGN_BYTES / 2, "saved {} MB", bytes.len() >> 20);
+            assert!(bytes.len() < crate::MAX_DESIGN_BYTES / 2, "saved {} MB", bytes.len() >> 20);
             {
                 let mut archive = zip::ZipArchive::new(Cursor::new(bytes.as_slice())).unwrap();
                 let index = (0..archive.len())
@@ -1680,10 +1698,10 @@ mod tests {
     #[test]
     fn mesh_over_the_expanded_cap_is_too_large_before_it_is_encoded() {
         assert_eq!(mesh_encoded_len(0, 0), Some(24));
-        let at_cap = (MAX_MESH_PART - 24) / 4;
-        assert_eq!(mesh_encoded_len(0, at_cap), Some(MAX_MESH_PART));
+        let at_cap = (max_mesh_part() - 24) / 4;
+        assert_eq!(mesh_encoded_len(0, at_cap), Some(max_mesh_part()));
         assert!(mesh_encoded_len(0, at_cap + 1).is_none());
-        let indices = (MAX_MESH_PART / 4 + 3).div_ceil(3) * 3;
+        let indices = (max_mesh_part() / 4 + 3).div_ceil(3) * 3;
         assert!(mesh_encoded_len(0, indices).is_none());
         assert!(mesh_encoded_len(usize::MAX, 0).is_none());
         assert!(mesh_encoded_len(0, usize::MAX).is_none());
@@ -1698,7 +1716,7 @@ mod tests {
         let original = package(&entries);
         let headers: Vec<_> = original.windows(4).enumerate().filter_map(|(i, v)| (v == b"PK\x01\x02").then_some(i)).collect();
         assert_eq!(headers.len(), 2);
-        for sizes in [[MAX_MESH_PART + 1, 1], [MAX_MESH_PART, MAX_MESH_PART]] {
+        for sizes in [[max_mesh_part() + 1, 1], [max_mesh_part(), max_mesh_part()]] {
             let mut bytes = original.clone();
             for (header, size) in headers.iter().zip(sizes) {
                 bytes[header + 24..header + 28].copy_from_slice(&(size as u32).to_le_bytes());
@@ -1714,7 +1732,7 @@ mod tests {
         let reference = &metadata["features"][0]["meshes"][0];
         let mut reader = PackageReader::new(Cursor::new(&bytes)).unwrap();
         let length = reader.blob(reference, "mesh_blob", "mesh").unwrap().len();
-        reader.hydrated = MAX_EXPANDED - length;
+        reader.hydrated = max_expanded() - length;
         assert!(reader.blob(reference, "mesh_blob", "mesh").is_ok());
         assert!(reader.blob(reference, "mesh_blob", "mesh").unwrap_err().to_string().contains("resolved payloads too large"));
     }
@@ -1749,7 +1767,7 @@ mod tests {
 
     #[test]
     fn step_that_cannot_be_saved_even_compressed_is_refused_at_import() {
-        let step = padded_step(MAX_DESIGN_BYTES + (80 << 20), true);
+        let step = padded_step(crate::MAX_DESIGN_BYTES + (80 << 20), true);
         let message = crate::step_import_feature(step.as_bytes(), "noisy.step").err().unwrap().to_string();
         assert!(message.contains("too large to save in a design"), "{message}");
     }
@@ -1787,7 +1805,7 @@ mod tests {
         assert!(message.contains("declared uncompressed size") || message.contains("length mismatch"), "{message}");
         // An honest declaration over the limit is refused before the part is read at all.
         let mut over = honest;
-        over[central + 24..central + 28].copy_from_slice(&((MAX_STEP_PART + 1) as u32).to_le_bytes());
+        over[central + 24..central + 28].copy_from_slice(&((max_step_part() + 1) as u32).to_le_bytes());
         assert!(crate::read_design(&over).unwrap_err().to_string().contains("expanded package too large"));
     }
 
@@ -1798,7 +1816,7 @@ mod tests {
         let mut metadata: Value = serde_json::from_slice(&entries["document.json"]).unwrap();
         let reference = metadata["features"][0].clone();
         let mut reader = PackageReader::new(Cursor::new(&bytes)).unwrap();
-        reader.hydrated = MAX_EXPANDED;
+        reader.hydrated = max_expanded();
         assert!(reader.blob(&reference, "step_blob", "step").unwrap_err().to_string().contains("resolved payloads too large"));
         for name in ["../escape.step", "blobs/not-a-hash.step", "blobs/00.png"] {
             metadata["features"][0]["step_blob"] = json!(name);

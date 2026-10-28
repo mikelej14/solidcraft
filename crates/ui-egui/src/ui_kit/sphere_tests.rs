@@ -1,6 +1,67 @@
 use super::*;
 
 #[test]
+fn interactive_preview_keeps_source_usage_and_replace_inside_the_card() {
+    for dark in [false, true] {
+        crate::theme::set_dark(dark);
+        for width in [280.0, 305.0, 308.0, 356.0] {
+            let ctx = crate::fonts::test_context();
+            crate::test_support::frame(&ctx, egui::RawInput::default(), |ui| {
+                ui.set_width(width);
+                super::super::scope(ui, |ui| {
+                    sphere_preview_with_source(
+                        ui,
+                        "preview",
+                        Sphere { color: Tokens::get().render_accent, kind: FinishKind::Metal, opacity: None },
+                        "Brushed aluminium",
+                        "Used by 4",
+                        |ui| super::super::compact_dropdown_menu(ui, "source", "In Design", |_| {}),
+                        |ui| super::super::searchable_icon_dropdown(ui, "spin", "Replace…", &mut String::new(), &[]),
+                    );
+                });
+            });
+            let card = crate::scenario::rect_of("dialog:list:preview").unwrap();
+            assert!(card.width() <= width + 1.0, "{card:?}");
+            for child in ["preview", "preview:replace", "preview:chip:0", "preview:chip:1"] {
+                assert!(card.contains_rect(crate::scenario::rect_of(child).unwrap()), "{child}");
+            }
+        }
+    }
+}
+
+#[test]
+fn preview_keeps_sample_chips_and_replace_inside_the_shared_card() {
+    for dark in [false, true] {
+        crate::theme::set_dark(dark);
+        for width in [280.0, 356.0] {
+            let ctx = crate::fonts::test_context();
+            crate::test_support::frame(&ctx, egui::RawInput::default(), |ui| {
+                ui.set_width(width);
+                super::super::scope(ui, |ui| {
+                    sphere_preview(
+                        ui,
+                        "preview",
+                        Sphere { color: Tokens::get().render_accent, kind: FinishKind::Metal, opacity: None },
+                        "A long appearance label that must fit the card",
+                        ["Library", "Used by 1000"],
+                        |ui| super::super::searchable_icon_dropdown(ui, "spin", "Replace…", &mut String::new(), &[]),
+                    );
+                });
+            });
+            let card = crate::scenario::rect_of("dialog:list:preview").unwrap();
+            let sample = crate::scenario::rect_of("preview").unwrap();
+            let replace = crate::scenario::rect_of("preview:replace").unwrap();
+            assert!(card.width() <= width + 1.0, "{card:?}");
+            assert!(card.contains_rect(sample) && card.contains_rect(replace));
+            assert!(replace.left() > sample.right());
+            for chip in ["preview:chip:0", "preview:chip:1"] {
+                assert!(card.contains_rect(crate::scenario::rect_of(chip).unwrap()));
+            }
+        }
+    }
+}
+
+#[test]
 fn tiles_keep_three_columns_cell_sphere_badge_and_selection_in_both_themes() {
     for dark in [false, true] {
         crate::theme::set_dark(dark);

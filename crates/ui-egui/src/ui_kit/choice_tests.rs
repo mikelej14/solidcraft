@@ -157,3 +157,74 @@ fn stage_chips_reserve_the_selected_weight_for_complete_labels_in_all_five_catal
         }
     }
 }
+
+#[test]
+fn thumbnail_choice_states_share_geometry_and_publish_modified_and_running_indicators() {
+    let ctx = crate::fonts::test_context();
+    let previous = crate::theme::is_dark();
+    for dark in [false, true] {
+        crate::theme::set_dark(dark);
+        crate::theme::apply(&ctx);
+        let mut dimensions = Vec::new();
+        for (selected, modified, progress) in [(false, false, None), (true, false, None), (true, true, Some(0.4))] {
+            scenario::clear_handles();
+            frame(&ctx, vec![], |ui| {
+                let response = thumbnail_choice(ui, "shot", "Hero", ThumbnailChoice { selected, modified, progress, ..Default::default() });
+                dimensions.push(response.rect.size());
+            });
+            assert_eq!(scenario::rect_of("dialog:list:shot:modified").is_some(), modified);
+            assert_eq!(scenario::rect_of("dialog:list:shot:progress").is_some(), progress.is_some());
+        }
+        assert!(dimensions.iter().all(|size| *size == dimensions[0]));
+        assert_eq!(dimensions[0].y, 38.0);
+    }
+    crate::theme::set_dark(previous);
+}
+
+#[test]
+fn thumbnail_choices_with_ready_images_preserve_names_and_full_chip_stride() {
+    let ctx = crate::fonts::test_context();
+    let texture = ctx.load_texture("shot", egui::ColorImage::filled([104, 60], egui::Color32::GRAY), Default::default());
+    frame(&ctx, vec![], |ui| {
+        ui.horizontal(|ui| {
+            let first = thumbnail_choice(ui, "detail", "Detail", ThumbnailChoice { texture: Some(texture.id()), ..Default::default() });
+            let second = thumbnail_choice(ui, "front", "Front", ThumbnailChoice { texture: Some(texture.id()), ..Default::default() });
+            assert!(first.rect.right() <= second.rect.left(), "loaded images must not move the cursor back over the preceding name");
+            assert!(first.rect.width() > 52.0 + 24.0, "reserve the shot name beside the thumbnail");
+        });
+    });
+}
+
+#[test]
+fn save_shot_dashes_leave_rounded_corners_at_the_chip_radius() {
+    fn endpoints(shape: &egui::Shape, color: egui::Color32, points: &mut Vec<egui::Pos2>) {
+        match shape {
+            egui::Shape::Vec(shapes) => {
+                for shape in shapes {
+                    endpoints(shape, color, points);
+                }
+            }
+            egui::Shape::LineSegment { points: line, stroke } if stroke.color == color => points.extend(line),
+            egui::Shape::Path(path) if matches!(path.stroke.color, egui::epaint::ColorMode::Solid(ink) if ink == color) => {
+                points.extend(&path.points)
+            }
+            _ => {}
+        }
+    }
+    let ctx = crate::fonts::test_context();
+    let mut rect = egui::Rect::NOTHING;
+    let mut output = ctx.run_ui(egui::RawInput::default(), |ui| {
+        rect = add_choice(ui, "Save Shot").rect;
+    });
+    let t = crate::theme::Tokens::get();
+    let mut points = Vec::new();
+    for shape in &output.shapes {
+        endpoints(&shape.shape, t.control_border, &mut points);
+    }
+    assert!(!points.is_empty());
+    let border = rect.shrink(t.space_2);
+    for corner in [border.left_top(), border.right_top(), border.right_bottom(), border.left_bottom()] {
+        assert!(points.iter().all(|point| point.distance(corner) > f32::from(t.control_radius) / 4.0), "dashes must follow the rounded perimeter");
+    }
+    output.textures_delta.clear();
+}

@@ -223,6 +223,10 @@ fn execute(app: &mut SolveApp, id: &str, params: Value) -> Result<Value, String>
         return crate::view_pick::pick_command(app, &params);
     }
     let r = app.run(id, params);
+    // Update Links in a part edited in place reads the assembly around it too, as its button does.
+    if r.is_ok() && is_command(Some(id), "component.update_links") && app.edit_in_place.active.is_some() {
+        crate::edit_in_place::refresh(app);
+    }
     if r.is_ok()
         && !matches!(
             id,
@@ -238,6 +242,7 @@ fn execute(app: &mut SolveApp, id: &str, params: Value) -> Result<Value, String>
                 | "view.navigate"
                 | "view.ambient_occlusion"
                 | "view.perspective"
+                | "view.angle_readout"
                 | "view.graphics_preset"
                 | "view.history_layout"
                 | "browser.expand_all"
@@ -267,9 +272,26 @@ const MAX_BATCH: usize = 10_000;
 /// bypass.
 const LOADS_A_FILE: [&str; 3] = ["doc.open", "file.insert_step", "file.insert_mesh"];
 
-/// Why `engine.batch` refuses these steps before running any: a step loads a file (send such
-/// steps one by one).
+/// Edit in Place and Finish Edit go to another design's tab: a batch's rollback, or a script's
+/// later steps, would land in the wrong design.
+const SWITCHES_DESIGN: [&str; 2] = ["component.edit_in_place", "component.finish_edit"];
+
+/// `command` names the command `id`, in any of the spellings the engine takes.
+fn is_command(command: Option<&str>, id: &str) -> bool {
+    command.and_then(solidcraft_engine::find_command).is_some_and(|spec| spec.id == id)
+}
+
+/// The command of `step` when it goes to another design's tab.
+fn switches_design(step: &Value) -> Option<&'static str> {
+    SWITCHES_DESIGN.into_iter().find(|id| is_command(command(step), id))
+}
+
+/// Why `engine.batch` refuses these steps before running any: a step loads a file or switches
+/// to another design (send such steps one by one).
 pub(crate) fn batch_refusal(steps: &[Value]) -> Option<String> {
+    if let Some((i, c)) = steps.iter().enumerate().find_map(|(i, step)| switches_design(step).map(|c| (i, c))) {
+        return Some(format!("engine.batch unavailable: step {i} ({c}) switches to another design"));
+    }
     let (i, c) = steps.iter().enumerate().find_map(|(i, step)| command(step).filter(|c| LOADS_A_FILE.contains(c)).map(|c| (i, c)))?;
     Some(format!("engine.batch unavailable: step {i} ({c}) loads a file"))
 }
@@ -474,6 +496,9 @@ fn dispatch(app: &mut SolveApp, ctx: &egui::Context, method: &str, p: &Value) ->
         }
         "engine.script" => {
             let steps = p.as_array().or_else(|| p.get("commands").and_then(Value::as_array));
+            if let Some(c) = steps.and_then(|steps| steps.iter().find_map(switches_design)) {
+                return err(format!("engine.script unavailable: {c} switches to another design (send it on its own)"));
+            }
             let mut replaced = false;
             let r = app
                 .session
@@ -486,6 +511,7 @@ fn dispatch(app: &mut SolveApp, ctx: &egui::Context, method: &str, p: &Value) ->
             // A successful replacement still happened if a later script step failed.
             if replaced {
                 crate::documents::reset_chat(app);
+                app.edit_in_place.active = None;
             }
             app.follow_view_request(false);
             wrap(r)

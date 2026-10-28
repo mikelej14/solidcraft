@@ -131,6 +131,50 @@ const ELEMENTS: &[Element] = &[
             assert_eq!(tree_row(ui, ui.id().with(("tree_geometry", index)), row).rect, Some(rect));
         }
     }),
+    element!("editor_section", |ui, _| {
+        editor_section(ui, "edit", "Edit", true, |ui| {
+            text(ui, "Colour", Text::Inline);
+        });
+    }),
+    element!("method_section", |ui, _| {
+        method_section(ui, "gpu_section", "Glass and absorption", "GPU", Some("Needs GPU path tracing"), |ui| {
+            checkbox(ui, "Use physical glass", &mut false);
+        });
+    }),
+    element!("vector3_field", |ui, _| {
+        row(ui, "Origin", |ui| vector3_field(ui, &mut [0.0; 3], -1e6..=1e6, " mm"));
+    }),
+    element!("pending_section", |ui, _| {
+        pending_section(ui, "upcoming", "Textures", "Soon");
+    }),
+    element!("inspector_header", |ui, _| {
+        inspector_header(ui, "body", "Boss", "Body");
+    }),
+    element!("workspace_chip", |ui, _| {
+        workspace_chip(ui, "Body");
+    }),
+    element!("section_heading", |ui, _| {
+        section_heading(ui, "Edit");
+    }),
+    element!("text_button", |ui, _| {
+        text_button(ui, "Reset", true);
+    }),
+    element!("color_hex_field", |ui, _| {
+        color_hex_field(ui, &mut [52, 92, 160], None);
+    }),
+    element!("mixed_slider", |ui, _| {
+        mixed_slider(ui, &mut 0.5, 0.0..=1.0, None);
+    }),
+    element!("searchable_icon_dropdown", |ui, _| {
+        searchable_icon_dropdown(ui, "spin", "Replace…", &mut String::new(), &[]);
+    }),
+    element!("icon_label_action", |ui, _| {
+        icon_label_action(ui, "Render Image", Some("play"), true, true);
+    }),
+    element!("completion_text", |ui, _| {
+        completion_text(ui, "Render 1 · 1920 × 1080", true);
+        completion_text(ui, "No completed image", false);
+    }),
     element!("tree_row", |ui, _| {
         let actions = [TreeAction { icon: "plus", hover_only: false, label: "Add", reason: None, target: "gallery:tree:add" }];
         tree_row(ui, ui.id().with("tree_plain"), &Row { label: "Objects", fold: Some(true), actions: &actions, ..Default::default() });
@@ -182,6 +226,35 @@ const ELEMENTS: &[Element] = &[
     element!("catalog_footer", |ui, _| {
         catalog_footer(ui, "Click to apply · drag onto the model");
     }),
+    element!("sphere_preview", |ui, _| {
+        sphere_preview(
+            ui,
+            "gallery:preview",
+            Sphere { color: Tokens::get().render_accent, kind: FinishKind::Satin, opacity: None },
+            "Satin",
+            ["Library", "Used by 2"],
+            |ui| searchable_icon_dropdown(ui, "spin", "Replace…", &mut String::new(), &[]),
+        );
+    }),
+    element!("sphere_preview_with_source", |ui, _| {
+        sphere_preview_with_source(
+            ui,
+            "gallery:preview-source",
+            Sphere { color: Tokens::get().render_accent, kind: FinishKind::Satin, opacity: None },
+            "Satin",
+            "Used by 2",
+            |ui| {
+                compact_dropdown_menu(ui, "gallery:source", "In Design", |ui| {
+                    text(ui, "Body look", Text::Inline);
+                })
+            },
+            |ui| text_button(ui, "Replace…", true),
+        );
+    }),
+    element!("mixed_scalar_field", |ui, _| {
+        let mut value = 0.5;
+        mixed_scalar_field(ui, &mut value, 0.0..=1.0, Some("Mixed"));
+    }),
     element!("sphere_grid", |ui, _| {
         let sphere = Sphere { color: Tokens::get().render_accent, kind: FinishKind::Satin, opacity: None };
         let tiles = ["gallery:grid:a", "gallery:grid:b", "gallery:grid:c"].map(|id| SphereTile {
@@ -204,6 +277,33 @@ const ELEMENTS: &[Element] = &[
             tip: "Satin metal",
         }
         .show(ui);
+    }),
+    element!("strip_toggle", |ui, _| {
+        ui.horizontal(|ui| {
+            strip_toggle(ui, true, "Hide Shots strip");
+            strip_toggle(ui, false, "Shots");
+        });
+    }),
+    element!("strip_heading", |ui, _| {
+        StripHeading::new(ui.painter(), "History").show(ui);
+    }),
+    element!("choice_chip_selected", |ui, _| {
+        choice_chip(ui, "saved", "Hero", true);
+    }),
+    element!("add_choice", |ui, _| {
+        add_choice(ui, "Save Shot");
+    }),
+    element!("compact_dropdown_menu", |ui, _| {
+        compact_dropdown_menu(ui, "gallery_strip_size", "1920 × 1080", |ui| {
+            list_picker(ui, "full_hd", "Full HD", true);
+        });
+    }),
+    element!("thumbnail_choice", |ui, _| {
+        ui.horizontal(|ui| {
+            thumbnail_choice(ui, "hero", "Hero", ThumbnailChoice { selected: true, modified: true, ..Default::default() });
+            thumbnail_choice(ui, "front", "Front", ThumbnailChoice { progress: Some(0.6), ..Default::default() });
+            add_choice(ui, "Save Shot");
+        });
     }),
     element!("settings_form", |ui, state| {
         settings_form(ui, Tokens::get().form_label_width, |ui| {
@@ -863,6 +963,15 @@ const ELEMENTS: &[Element] = &[
                 row.cell(|ui| {
                     cell_editor(ui, ui.id().with("value"), &mut s.value, "", false);
                 });
+            });
+        });
+    }),
+    element!("name_list", "dialog:table:gallery_names:Bracket.solidcraft", None, |ui, _| {
+        name_list(ui, "gallery_names", &["Name", "Size", "Actions"], "No files", |list| {
+            list.row("Bracket.solidcraft", |row| {
+                row.name("Bracket.solidcraft");
+                row.cell(|ui| text(ui, "12.3 KB", Text::Inline));
+                row.cell(|ui| button(ui, "Open", Button::Small));
             });
         });
     }),

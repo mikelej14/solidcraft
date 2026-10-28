@@ -39,7 +39,7 @@ pub static COMMANDS: &[CommandSpec] = &[
     CommandSpec::new("view.delete", "Delete Named View", view_delete).icon("delete").params("view: name"),
     CommandSpec::new("view.list", "List Named Views", view_list).icon("list").noundo().doc_only(),
     CommandSpec::new("view.apply", "Restore Named View", view_apply).icon("camera").noundo().params(
-        "view?: front|back|top|bottom|left|right|iso|home (frames the model) | a named view's name; or camera?: {target: [x,y,z], yaw, pitch, distance, fov?, roll?} (radians, mm; roll defaults to 0, must be finite and is clamped to ±π; up is refused: the up axis comes from the design settings) → camera. The viewport (and the MCP screenshot) moves there. View state: not saved, not an undo step",
+        "view?: front|back|top|bottom|left|right|iso|home (frames the model) | a named view's name; or camera?: {target: [x,y,z], yaw, pitch, distance, fov?, roll?} (radians, mm, about the up axis; yaw: heading of the line of sight, 0 along +Y (Front), π/2 along +X (Left), π (Back), −π/2 (Right); pitch: the eye's elevation, within ±π/2, π/2 = Top; roll defaults to 0, turns the picture clockwise, must be finite and is clamped to ±π; the View angles readout shows these in degrees; up is refused: the up axis comes from the design settings) → camera. The viewport (and the MCP screenshot) moves there. View state: not saved, not an undo step",
     ),
     CommandSpec::new("browser.order", "Order Browser Items", order).icon("reorder").params("folder, component?, order: [keys] (the folder's items in display order)"),
     CommandSpec::new("browser.visibility", "Show/Hide", visibility).icon("eye").params(
@@ -751,6 +751,10 @@ fn view_apply(s: &mut Session, p: &Value) -> Result<Value> {
                 None => 0.0,
             };
             let v: solidcraft_doc::NamedView = serde_json::from_value(c.clone()).map_err(|e| bad(cmd, format!("bad camera: {e}")))?;
+            // Past a pole the same view has other angles; the orbit would snap it back (#6032).
+            if !(v.pitch.abs() <= std::f64::consts::FRAC_PI_2 + 1e-9) {
+                return Err(bad(cmd, "camera `pitch` must be within ±π/2 radians (±90°)"));
+            }
             crate::render::Camera { roll: roll.clamp(-std::f64::consts::PI, std::f64::consts::PI), ..camera_of(&v) }
         }
         // Standard view names come first, as in the browser's Named Views folder.
@@ -1578,6 +1582,43 @@ mod tests {
                 s.execute("view.apply", &json!({"camera": {"target": [0, 0, 0], "yaw": 0, "pitch": 0, "distance": 80, "roll": roll}})).unwrap_err();
             assert!(err.to_string().contains("roll"), "{err}");
             assert_eq!(serde_json::to_value(s.camera).unwrap(), before);
+        }
+    }
+
+    /// The View angles popup (#6032) sets the view through `view.apply`: the readout's degrees are
+    /// the camera's radians, named views read round numbers, and hostile angles never leave a
+    /// camera past a pole or a NaN behind.
+    #[test]
+    fn applying_a_camera_by_view_angles_reads_back_and_refuses_hostile_pitch() {
+        use crate::render::ViewAngles;
+        let mut s = Session::default();
+        for (view, (yaw, pitch)) in
+            [("front", (0.0, 0.0)), ("left", (90.0, 0.0)), ("right", (-90.0, 0.0)), ("back", (180.0, 0.0)), ("top", (0.0, 90.0))]
+        {
+            run(&mut s, "view.apply", json!({"view": view}));
+            let a = s.camera.expect("a camera for the standard view").view_angles();
+            assert!((a.yaw - yaw).abs() < 1e-3 && (a.pitch - pitch).abs() < 1e-3 && a.roll == 0.0, "{view}: {a:?}");
+        }
+        let typed = ViewAngles { yaw: -30.0, pitch: 15.0, roll: 5.0 };
+        let cam = crate::render::Camera::default().with_view_angles(typed).expect("finite angles");
+        let p = json!({"camera": {"target": [0, 0, 0], "yaw": cam.yaw, "pitch": cam.pitch, "roll": cam.roll, "distance": 80}});
+        run(&mut s, "view.apply", p);
+        let a = s.camera.expect("the typed camera").view_angles();
+        assert!((a.yaw - typed.yaw).abs() < 1e-9 && (a.pitch - typed.pitch).abs() < 1e-9 && (a.roll - typed.roll).abs() < 1e-9, "{a:?}");
+        // Straight down is allowed (90° in radians may round a hair past π/2).
+        run(&mut s, "view.apply", json!({"camera": {"target": [0, 0, 0], "yaw": 0, "pitch": 90.0_f64.to_radians(), "distance": 80}}));
+        // Many turns of yaw are the same heading; the readout brings it into range.
+        run(&mut s, "view.apply", json!({"camera": {"target": [0, 0, 0], "yaw": 1e300, "pitch": 0, "distance": 80}}));
+        let a = s.camera.expect("a camera").view_angles();
+        assert!(a.yaw.is_finite() && (-180.0..=180.0).contains(&a.yaw), "{a:?}");
+        let before = serde_json::to_value(s.camera).unwrap();
+        for pitch in [json!(2.0), json!(-1.6), json!(1e300), json!(-f64::MAX), json!(f64::NAN), json!("90"), json!(null)] {
+            let err = s.execute("view.apply", &json!({"camera": {"target": [0, 0, 0], "yaw": 0, "pitch": pitch, "distance": 80}})).unwrap_err();
+            assert!(err.to_string().contains("camera"), "{pitch}: {err}");
+            assert_eq!(serde_json::to_value(s.camera).unwrap(), before, "a refused camera leaves the view alone");
+        }
+        for yaw in [json!(f64::NAN), json!(f64::INFINITY), json!("0")] {
+            assert!(s.execute("view.apply", &json!({"camera": {"target": [0, 0, 0], "yaw": yaw, "pitch": 0, "distance": 80}})).is_err(), "{yaw}");
         }
     }
 

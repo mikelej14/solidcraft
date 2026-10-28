@@ -133,6 +133,7 @@ pub(super) fn perform_job(app: &mut SolveApp, id: &str) -> Result<(), String> {
             let job = serde_json::from_value(reply["job"].clone())
                 .map_err(|e| crate::i18n::format("render.error_job_identity", &[("error", &e.to_string())]))?;
             app.render_workspace.view.job = Some(job);
+            app.render_workspace.view.job_shot = Some(app.render_workspace.view.name.clone());
         }
         "render.result.regrade" => {
             let source = app.render_workspace.view.completed.ok_or_else(|| app.tr("render.ribbon_no_result").to_string())?;
@@ -172,6 +173,7 @@ pub(super) fn presentation(app: &SolveApp) -> solidcraft_engine::render::job::pr
 }
 
 fn focus(app: &mut SolveApp, page: inspector::Page, category: Option<&str>) {
+    app.render_workspace.view.inspector.hidden = false;
     app.render_workspace.view.inspector.page = page;
     if let Some(category) = category {
         library::open_category(app, category);
@@ -206,14 +208,17 @@ fn navigate(app: &mut SolveApp, id: &str) -> Result<(), String> {
     action_ready(app, id)?;
     use inspector::Page;
     match id {
-        "render.aging.describe" => focus(app, Page::Aging, None),
+        "render.aging.describe" => {
+            focus(app, Page::Appearance, None);
+            inspector::reveal(app, "render:appearance:advanced");
+        }
         "render.effects.describe" => focus(app, Page::Effects, None),
         "render.preset.resolve" | "render.preset.apply" => focus(app, Page::Scene, Some("native_scenes")),
         "render.settings.get" | "render.shot.duplicate" | "render.shot.rename" | "render.shot.remove" => {
             focus(app, Page::Scene, None);
             inspector::reveal(app, "render_shot_manager");
         }
-        "render.settings.set" => setups::save(app)?,
+        "render.settings.set" => app.render_workspace.view.save_shot_name = Some(String::new()),
         "render.library.appearance.apply" | "render.optics.bind" | "render.optics.unbind" => focus(app, Page::Appearance, Some("surfaces")),
         "render.library.surface.bind" | "render.library.surface.prepare" | "render.library.surface.unbind" => {
             focus(app, Page::Appearance, Some("surfaces"));

@@ -765,7 +765,18 @@ fn batch(b: &mut dyn Backend, a: &Map<String, Value>) -> Value {
     let mut mapped: Vec<Value> = Vec::with_capacity(steps.len());
     let mut filters: Vec<(usize, String)> = Vec::new();
     for (i, step) in steps.iter().enumerate() {
-        match batch_step(step) {
+        // The window goes to another design's tab for these, however the step names them: the
+        // batch's later steps and its rollback would land in the wrong design.
+        let step_result = batch_step(step).and_then(|(command, params, filter)| {
+            let id = if command.is_empty() { step.get("command").or_else(|| step.get("id")).and_then(Value::as_str).unwrap_or("") } else { &command };
+            match solidcraft_engine::find_command(id).map(|spec| spec.id) {
+                Some(c @ ("component.edit_in_place" | "component.finish_edit")) => {
+                    Err(format!("`{c}` goes to another design's tab: send it on its own, not in a batch"))
+                }
+                _ => Ok((command, params, filter)),
+            }
+        });
+        match step_result {
             Ok((command, _, _)) if command.is_empty() => mapped.push(step.clone()),
             Ok((command, params, filter)) => {
                 if let Some(f) = filter {

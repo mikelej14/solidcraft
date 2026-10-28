@@ -154,6 +154,37 @@ retain world coordinates. A lost cross-component association refreshed by an old
 need an explicit relink or refresh when its source returns. Loading never guesses a numerical
 correction. Association records, coordinate arrays and placements are bounded and checked.
 
+## Large files
+
+SolidCraft opens STEP, IGES and the other CAD files it imports up to **512 MB**, and design files
+up to **256 MB**. A larger file is refused before it is read, and the message says how to raise
+the limit. In the desktop app you can raise both:
+
+- **Preferences › General › Largest file to open** sets each limit in MB, from its default up to
+  16 GB (16384 MB). It is kept between runs; Restore Defaults on the General page puts back 512 MB
+  and 256 MB.
+- **`--max-file-size SIZE`** at launch (`solidcraft --max-file-size 2GB big-assembly.step`) raises
+  both limits for that run only, over the preference, without saving anything. SIZE is a number
+  with MB or GB (`2GB`, `1.5GB`, `1500MB`; 1 GB is 1024 MB), at most 16GB. A size below a default
+  leaves that limit at its default. A size the app can't read stops it from starting, with the
+  reason. `solidcraft-cli` takes the same flag with any command.
+
+Before you raise them:
+
+- **Memory:** a file is read whole, and what is built from it is held in memory beside it. Expect
+  several times the file's size in RAM, more for finely detailed parts, and a long open and a slow
+  view for an assembly with hundreds of thousands of faces.
+- **Saving:** a design keeps the text of a STEP import, compressed, and the design limit applies
+  to the saved file. An import whose compressed text doesn't fit in a design file is refused when
+  it is imported, so it never opens and then fails to save; raise the design file limit too, or
+  open the file with `--max-file-size`, which raises both. Opening that design again needs the
+  same limits.
+- **Web app:** the browser version keeps 512 MB and 256 MB: a browser tab can't hold larger files.
+  Its Preferences show a note instead of the setting.
+
+The control channel sets the same preference with `ui.prefs {"max_step_file_mb": 2048,
+"max_design_file_mb": 1024}`.
+
 ## Design properties
 
 **File → Design Properties…** (also under **Document Settings** in the Browser, and on the

@@ -16,7 +16,8 @@ pub enum Surface {
     Palette,
     /// Workspace switcher and ribbon cards.
     Chrome,
-    /// Native application/title bar; its presentation is independent of workspace layout.
+    /// Native application/title bar and the optional status bar along the window's bottom edge;
+    /// their presentation is independent of workspace layout.
     ApplicationBar,
     /// Movable system windows and modal dialogs; never become workspace docks.
     Window,
@@ -250,7 +251,10 @@ impl Container {
     }
 
     pub fn area(self, id: Id) -> egui::Area {
-        egui::Area::new(id).enabled(self.input_enabled())
+        // Persistent workspace cards stay below tool/system windows even when clicked.
+        // Other areas keep egui's normal window layer; popups choose their own order.
+        let order = if self.surface == Surface::Panel { egui::Order::Background } else { egui::Order::Middle };
+        egui::Area::new(id).enabled(self.input_enabled()).order(order)
     }
 
     pub fn edge(self, id: impl Into<Id>, edge: Edge) -> egui::Panel {

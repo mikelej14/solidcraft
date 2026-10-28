@@ -1023,6 +1023,53 @@ mod tests {
         }
     }
 
+    /// A sketch's dimensions draw their lines and arrows in the theme's dimension colours,
+    /// driving and driven, never in the colour of the curves they measure (#7861).
+    #[test]
+    fn dimensions_are_drawn_in_the_dimension_colours() {
+        fn strokes(s: &Shape, out: &mut std::collections::BTreeSet<[u8; 4]>) {
+            match s {
+                Shape::LineSegment { stroke, .. } => {
+                    out.insert(stroke.color.to_array());
+                }
+                Shape::Path(p) => {
+                    if let egui::epaint::ColorMode::Solid(c) = p.stroke.color {
+                        out.insert(c.to_array());
+                    }
+                }
+                Shape::Vec(v) => v.iter().for_each(|s| strokes(s, out)),
+                _ => {}
+            }
+        }
+        cancel();
+        let mut h = crate::scenario::Harness::new();
+        h.app.home.open = false;
+        h.app.run("sketch.create", json!({"plane":"XY"})).unwrap();
+        let mut line = |y: f64| {
+            h.app.run("sketch.line", json!({"points":[[0,y],[30,y]],"connect":false,"infer":false})).unwrap()["curves"][0]
+                .as_str()
+                .unwrap()
+                .to_owned()
+        };
+        let (driving, driven) = (line(0.0), line(20.0));
+        h.app.run("sketch.dimension", json!({"entities":[driving],"value":30})).unwrap();
+        h.app.run("sketch.dimension", json!({"entities":[driven],"driven":true})).unwrap();
+        h.app.session.selection.clear();
+        h.call("ui.view", json!({"view":"top"}));
+        h.settle();
+        h.frames(2);
+        assert_eq!(drawn().len(), 2, "both dimensions are drawn");
+        let tk = Tokens::get();
+        let mut seen = std::collections::BTreeSet::new();
+        h.shapes.iter().for_each(|s| strokes(&s.shape, &mut seen));
+        for (name, c) in [("dimension", tk.dimension), ("dimension_driven", tk.dimension_driven)] {
+            assert!(seen.contains(&c.to_array()), "no line drawn in {name} {c:?}: {seen:?}");
+            assert_ne!(c, tk.sketch, "{name}");
+            assert_ne!(c, tk.sketch_fixed, "{name}");
+        }
+        cancel();
+    }
+
     /// Typing `rad` into a new dimension's value lists `radius` although `rad` is itself the
     /// radians unit; the popup is unarmed, so Down then Enter completes the name and the
     /// dimension takes it (#3663).

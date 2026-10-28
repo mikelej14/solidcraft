@@ -689,7 +689,6 @@ mod tests {
                 "BATCH",
                 "Shots",
                 "Shots Strip",
-                "Strip",
                 "Pick",
                 "Component",
                 "The live preview shows direct light only and no shadows.",
@@ -701,6 +700,10 @@ mod tests {
             // rather than requiring its spelling to differ from English.
             assert!(locale.0.messages().contains_key("toolbar.render_studio"));
             assert_eq!(locale.label("STUDIO"), locale.text("toolbar.render_studio"));
+            let english: Messages = serde_json::from_str(ENGLISH.source).unwrap();
+            for id in english.keys().filter(|id| id.starts_with("render.inspector_")) {
+                assert!(locale.0.messages().contains_key(id), "{language}: {id}");
+            }
             for id in [
                 "render.pick_label",
                 "render.pick_body",
@@ -710,6 +713,10 @@ mod tests {
                 "render.tree_browser",
                 "render.tree_search",
                 "render.tree_more",
+                "render.shots_save",
+                "render.shots_name_help",
+                "render.shots_no_result",
+                "render.shots_result",
                 "render.studios_environments",
                 "render.frame_presets",
                 "render.size_presets",

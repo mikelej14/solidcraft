@@ -1,5 +1,6 @@
 use serde_json::{Value, json};
 use solidcraft_geom::Vec2;
+use solidcraft_sketch::ConstraintKind;
 
 use crate::Session;
 
@@ -1420,4 +1421,49 @@ fn an_arc_and_its_end_point_dimension_the_arc_length() {
     run(&mut s, "sketch.point", json!({"point": [20, 20], "id": "p9"}));
     let e = s.execute("sketch.dimension", &json!({"entities": ["a1", "p9"]})).map(|v| v["type"].clone());
     assert!(!matches!(e, Ok(ref t) if t == "ArcLengthDimension"), "a point off the arc's ends is not an arc length: {e:?}");
+}
+
+/// #7464: the distance between a slot's two arc caps measures the centre-to-centre distance
+/// (the slot's length), not the gap between their inner edges.
+#[test]
+fn slot_caps_dimension_is_the_centre_to_centre_distance() {
+    let mut s = new_sketch();
+    // Centre [0,0], one arc centre [20,0], width 10: caps at ±20 of radius 5, centre-to-centre 40.
+    let sl = run(&mut s, "sketch.slot.center_point", json!({"center": [0, 0], "end": [20, 0], "width": 10}));
+    // The slot returns its curves as [bottom line, right cap, top line, left cap].
+    let curves = ids(&sl["curves"]);
+    let d = run(&mut s, "sketch.dimension", json!({"entities": [curves[1], curves[3]], "driven": true}));
+    assert!((d["measured"].as_f64().unwrap() - 40.0).abs() < 1e-6, "{d}");
+    let sk = sketch(&s);
+    assert!(
+        sk.constraints.iter().any(|c| matches!(c.kind, ConstraintKind::Distance { .. })),
+        "{:?}",
+        sk.constraints.iter().map(|c| &c.kind).collect::<Vec<_>>()
+    );
+    // Two circles drawn apart, not joined as a slot, still measure the gap between their edges (#4064).
+    let mut s = new_sketch();
+    let c1 = ids(&run(&mut s, "sketch.circle.center", json!({"center": [0, 0], "radius": 5}))["curves"])[0].clone();
+    let c2 = ids(&run(&mut s, "sketch.circle.center", json!({"center": [30, 0], "radius": 5}))["curves"])[0].clone();
+    let d = run(&mut s, "sketch.dimension", json!({"entities": [c1, c2], "driven": true}));
+    assert!((d["measured"].as_f64().unwrap() - 20.0).abs() < 1e-6, "{d}");
+}
+
+/// Two arcs joined by two lines but bulging inward are not a slot's caps: their distance stays
+/// the gap between the edges, not a centre-to-centre distance.
+#[test]
+fn inward_bulging_arc_pairs_keep_the_gap_dimension() {
+    let mut s = new_sketch();
+    run(&mut s, "sketch.line", json!({"points": [[0, 0], [40, 0]], "ids": ["l1"]}));
+    run(&mut s, "sketch.line", json!({"points": [[0, 10], [40, 10]], "ids": ["l2"]}));
+    run(&mut s, "sketch.arc.three_point", json!({"start": "l1.start", "through": [3, 5], "end": "l2.start", "id": "ca"}));
+    run(&mut s, "sketch.arc.three_point", json!({"start": "l1.end", "through": [37, 5], "end": "l2.end", "id": "cb"}));
+    let d = run(&mut s, "sketch.dimension", json!({"entities": ["ca", "cb"], "driven": true}));
+    // The shape spans x 0..40; the gap between the inward edges is 34 mm, not an overall length.
+    assert!((d["measured"].as_f64().unwrap() - 34.0).abs() < 1e-6, "{d}");
+    let sk = sketch(&s);
+    assert!(
+        sk.constraints.iter().any(|c| matches!(c.kind, ConstraintKind::CircleCircleDistance { .. })),
+        "{:?}",
+        sk.constraints.iter().map(|c| &c.kind).collect::<Vec<_>>()
+    );
 }

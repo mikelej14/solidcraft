@@ -306,9 +306,61 @@ pub(crate) fn warm_names<'a>(bodies: impl Iterator<Item = &'a ModelBody>) {
     }
 }
 
+/// Bodies whose names are worked out one from the other, oldest first, at most this many apart
+/// (see [`warm_chain`]).
+const WARM_STEP: usize = 16;
+
+/// Up to this many earlier versions of a body are walked to name it from the oldest up.
+const MAX_CHAIN: usize = 100_000;
+
+/// The body `b`'s names are worked out from first: the body it is a moved copy of, else the
+/// body of its name before the feature that made it (`None`: none, or past [`MAX_DEPTH`]).
+fn predecessor(b: &ModelBody) -> Option<&ModelBody> {
+    if let Some(source) = &b.names.copy_of {
+        return Some(source);
+    }
+    let o = b.names.origin.as_ref().filter(|o| o.depth < MAX_DEPTH)?;
+    o.before.body(&b.name)
+}
+
+/// Work out the names of the earlier versions of `b` that are not known yet, oldest first and
+/// every [`WARM_STEP`]th, so that naming `b` never recurses through more than that many of them.
+/// A body's names are found from the names of the body it was made from, which are found the
+/// same way: a body moved or changed by a few hundred features in a row whose names nothing
+/// asked for overflowed the window thread's stack the first time something did (a fillet after
+/// them evaluated again when an earlier feature is reordered or moved: #7587, #7926). `ready` says whether a
+/// body's names are known, `name` works them out. The names are the same either way.
+fn warm_chain(b: &ModelBody, ready: fn(&ModelBody) -> bool, name: fn(&ModelBody)) {
+    let mut chain: Vec<&ModelBody> = Vec::new();
+    let mut at = b;
+    while chain.len() < MAX_CHAIN
+        && let Some(p) = predecessor(at)
+        && !ready(p)
+    {
+        chain.push(p);
+        at = p;
+    }
+    if chain.len() <= WARM_STEP {
+        return;
+    }
+    for p in chain.iter().rev().step_by(WARM_STEP) {
+        name(p);
+    }
+}
+
 /// A body's names, with what finding them again needs: from the history of the feature that
 /// made it where it reports one, else from geometry (unverified).
 pub(crate) fn names(b: &ModelBody) -> Arc<Names> {
+    if let Some(known) = b.names.names.get() {
+        return known.clone();
+    }
+    warm_chain(
+        b,
+        |x| x.names.names.get().is_some(),
+        |x| {
+            let _ = names(x);
+        },
+    );
     // A moved copy has its source's names (the source's cell keeps them for both).
     if let Some(source) = &b.names.copy_of {
         return b.names.names.get_or_init(|| names(source)).clone();
@@ -333,6 +385,16 @@ pub(crate) fn names(b: &ModelBody) -> Arc<Names> {
 /// as those builds gave them, pieces of a split face numbered along the longest axis of their
 /// spread (`#1`, `#2`, …).
 pub(crate) fn legacy_face_names(b: &ModelBody) -> Arc<Vec<String>> {
+    if let Some(known) = b.names.legacy.get() {
+        return known.clone();
+    }
+    warm_chain(
+        b,
+        |x| x.names.legacy.get().is_some(),
+        |x| {
+            let _ = legacy_face_names(x);
+        },
+    );
     if let Some(source) = &b.names.copy_of {
         return legacy_face_names(source);
     }

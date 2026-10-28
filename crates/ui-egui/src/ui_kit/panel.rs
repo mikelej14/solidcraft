@@ -216,6 +216,57 @@ impl<'a> TopHeader<'a> {
     }
 }
 
+/// Selection editor chrome, shared by floating Inspectors. Returns an action for registry dispatch.
+#[derive(Clone, Copy)]
+pub(crate) enum InspectorAction {
+    Close,
+    Remove,
+}
+
+pub(crate) fn inspector_header(ui: &mut Ui, icon: &str, title: &str, kind: &str) -> Option<InspectorAction> {
+    let t = Tokens::get();
+    let mut action = None;
+    let (rect, _) = ui.allocate_exact_size(vec2(dimension(ui.available_width()), header_height()), egui::Sense::hover());
+    let icon_rect = egui::Rect::from_center_size(egui::pos2(rect.left() + (t.space_16 + t.space_4), rect.center().y), vec2(t.space_14, t.space_14));
+    crate::icons::paint_ink(ui.painter(), icon_rect, icon, crate::theme::TabAccent::current(ui.ctx()).ink);
+    let close_rect = egui::Rect::from_center_size(
+        egui::pos2(rect.right() - (t.space_16 + t.space_4), rect.center().y),
+        vec2(t.form_close_size, t.form_close_size),
+    );
+    let close = super::icon_button_at(ui, close_rect, "close", crate::i18n::tr_label("Close"));
+    scenario::publish_target("render:appearance:close", close.rect);
+    if close.clicked() {
+        action = Some(InspectorAction::Close);
+    }
+    let more_rect = close_rect.translate(vec2(-t.control_height - t.space_4, 0.0));
+    {
+        let mut more_ui = ui.new_child(egui::UiBuilder::new().id_salt("inspector_more").max_rect(more_rect));
+        let ui = &mut more_ui;
+        super::Menu::text(ui, "…", |ui| {
+            if super::MenuItem::new("render:appearance:remove", crate::i18n::tr("render.inspector_remove"), "").show(ui).clicked() {
+                action = Some(InspectorAction::Remove);
+                ui.close();
+            }
+        });
+    }
+    let badge_width = ui.painter().layout_no_wrap(kind.to_owned(), crate::fonts::semibold(t.font_small), t.form_ink).size().x + t.space_16;
+    let badge = egui::Rect::from_center_size(
+        egui::pos2(more_rect.left() - t.space_8 - badge_width / 2.0, rect.center().y),
+        vec2(badge_width, t.space_16 + t.space_4),
+    );
+    {
+        let mut badge_ui = ui.new_child(egui::UiBuilder::new().id_salt("inspector_kind").max_rect(badge));
+        super::workspace_chip(&mut badge_ui, kind);
+    }
+    let name = egui::Rect::from_min_max(egui::pos2(icon_rect.right() + t.space_8, rect.top()), egui::pos2(badge.left() - t.space_8, rect.bottom()));
+    paint_text(ui, name, title, crate::fonts::semibold(t.font_label), t.form_ink, false);
+    ui.interact(name, ui.make_persistent_id("inspector_title"), egui::Sense::hover())
+        .widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Label, ui.is_enabled(), title));
+    t.secondary_hline(ui.painter(), rect.x_range(), rect.bottom(), t.dialog_rule);
+    scenario::publish_rect("dialog:header", rect);
+    action
+}
+
 /// A bounded docked or floating card. Uses form_card_width and the caller's tokenised frame.
 /// Window IDs and content scopes are retained so moving a card does not reset field focus.
 pub(crate) struct Panel<'a> {
@@ -241,6 +292,7 @@ pub(crate) struct WorkspaceOptions<'a> {
     pub fill_height: bool,
     /// Use the minimum dock width without overwriting its remembered width.
     pub compact: bool,
+    pub editor: bool,
     pub enabled: bool,
     pub header_actions: Option<&'a mut dyn FnMut(&mut Ui)>,
 }
@@ -298,6 +350,43 @@ impl<'a> Panel<'a> {
             .show(ui, add)
     }
 
+    /// One-row editor footer, pinned inside the shared workspace card.
+    pub(crate) fn editor_footer<R>(ui: &mut Ui, key: &'static str, add: impl FnOnce(&mut Ui) -> R) -> egui::InnerResponse<R> {
+        let t = Tokens::get();
+        let host = super::Container::new(ui.ctx(), super::Surface::Viewport);
+        host.edge(key, super::Edge::Bottom)
+            .exact_size(t.form_footer_height)
+            .resizable(false)
+            .frame(
+                host.edge_frame(t.dialog_footer)
+                    .outer_margin(egui::Margin::symmetric(-(t.space_12 as i8), 0))
+                    .inner_margin(egui::Margin::symmetric(t.space_12 as i8, t.space_8 as i8)),
+            )
+            .show(ui, |ui| {
+                let band = ui.max_rect().expand2(vec2(t.space_12, t.space_8));
+                ui.painter().rect_filled(band, egui::CornerRadius { nw: 0, ne: 0, sw: t.radius_xl, se: t.radius_xl }, t.dialog_footer);
+                t.secondary_hline(ui.painter(), band.x_range(), band.top(), t.dialog_rule);
+                scenario::publish_rect("dialog:editor_footer", band);
+                add(ui)
+            })
+    }
+
+    /// Shared strip composition reserves actions at the right and scrolls choices at the left.
+    pub(crate) fn strip_contents(ui: &mut egui::Ui, right: impl FnOnce(&mut egui::Ui), choices: impl FnOnce(&mut egui::Ui)) {
+        ui.spacing_mut().item_spacing.x = Tokens::get().space_8;
+        ui.horizontal_centered(|ui| {
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                right(ui);
+                egui::ScrollArea::horizontal()
+                    .id_salt("strip_choices")
+                    .scroll_bar_visibility(egui::scroll_area::ScrollBarVisibility::AlwaysHidden)
+                    .show(ui, |ui| {
+                        ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), choices);
+                    });
+            });
+        });
+    }
+
     /// Floating workspace strip using the same bottom rectangle and chrome as History.
     pub(crate) fn bottom_strip<R>(
         ui: &mut Ui,
@@ -312,7 +401,7 @@ impl<'a> Panel<'a> {
             return None;
         }
         let ctx = ui.ctx().clone();
-        Some(container.area(egui::Id::new(id)).fixed_pos(rect.min).movable(false).order(egui::Order::Middle).show(&ctx, |ui| {
+        Some(container.area(egui::Id::new(id)).fixed_pos(rect.min).movable(false).show(&ctx, |ui| {
             let frame = container.frame(&ctx, Tokens::get().panel, crate::frame::Side::Left).inner_margin(Tokens::get().space_4);
             container
                 .show_frame(ui, frame, rect, |ui| {
@@ -384,8 +473,14 @@ impl<'a> Panel<'a> {
         );
         let ctx = ui.ctx().clone();
         let mut move_side = None;
-        let response = container.area(egui::Id::new(options.id)).fixed_pos(rect.min).movable(false).order(egui::Order::Middle).show(&ctx, |ui| {
-            let frame = container.frame(&ctx, t.panel, if left { crate::frame::Side::Left } else { crate::frame::Side::Right }).inner_margin(0.0);
+        let response = container.area(egui::Id::new(options.id)).fixed_pos(rect.min).movable(false).show(&ctx, |ui| {
+            let frame = container
+                .frame(
+                    &ctx,
+                    if options.editor { t.dialog_body } else { t.panel },
+                    if left { crate::frame::Side::Left } else { crate::frame::Side::Right },
+                )
+                .inner_margin(0.0);
             let content = container.show_frame(ui, frame, bounds, |ui| {
                 let size = (rect.size() - frame.total_margin().sum()).max(egui::Vec2::ZERO);
                 // Allocate the bounded host once; overflowing controls scroll/clip inside a child,
@@ -435,6 +530,8 @@ impl<'a> Panel<'a> {
                 egui::Frame::NONE
                     .inner_margin(if tree {
                         egui::Margin::symmetric(0, t.space_4 as i8)
+                    } else if options.editor {
+                        egui::Margin { left: t.space_12 as i8, right: t.space_12 as i8, top: t.space_10 as i8, bottom: 0 }
                     } else {
                         egui::Margin::same(if options.icon.is_empty() { t.space_10 } else { t.space_12 } as i8)
                     })
@@ -443,7 +540,12 @@ impl<'a> Panel<'a> {
                         if tree {
                             ui.spacing_mut().item_spacing.y = 0.0;
                         }
-                        super::scope(ui, add)
+                        super::scope(ui, |ui| {
+                            if options.editor {
+                                ui.spacing_mut().item_spacing.y = t.space_8;
+                            }
+                            add(ui)
+                        })
                     })
                     .inner
             });

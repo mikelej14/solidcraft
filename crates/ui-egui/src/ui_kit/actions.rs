@@ -78,6 +78,17 @@ fn icon_button_presentation(
     response.on_hover_text(crate::i18n::tr_label(label))
 }
 
+/// Plain secondary text action, sharing the kit's normal hit height and typography.
+pub(crate) fn text_button(ui: &mut Ui, label: &str, enabled: bool) -> Response {
+    let t = Tokens::get();
+    let response = ui.add_enabled(
+        enabled,
+        egui::Button::new(RichText::new(label).size(t.font_label).color(t.form_ink)).frame(false).min_size(vec2(0.0, t.control_height)),
+    );
+    scenario::publish_target(&format!("dialog:action:{label}"), response.rect);
+    response
+}
+
 /// Esc cancels; unowned Enter submits only when valid. Tokens: `none`.
 pub(crate) fn keyboard(ctx: &egui::Context, ok_enabled: bool) -> Action {
     if ctx.input(|i| i.key_pressed(egui::Key::Escape)) {
@@ -585,7 +596,7 @@ pub(super) fn icon_label_width(ui: &Ui, label: &str, icon: Option<&str>, primary
         + if icon.is_some() { t.space_14 + t.space_6 } else { 0.0 }
 }
 
-pub(super) fn icon_label_action(ui: &mut Ui, label: &str, icon: Option<&str>, enabled: bool, primary: bool) -> Response {
+pub(crate) fn icon_label_action(ui: &mut Ui, label: &str, icon: Option<&str>, enabled: bool, primary: bool) -> Response {
     icon_label_presentation(ui, label, icon, enabled, primary, false, false)
 }
 

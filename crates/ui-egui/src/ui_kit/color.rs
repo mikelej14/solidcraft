@@ -46,6 +46,39 @@ pub(crate) fn color_field(ui: &mut Ui, rgb: &mut [u8; 3]) -> Response {
     if ui.style().explanation_tooltips { response.on_hover_text(i18n::tr("color.edit")) } else { response }
 }
 
+/// A colour swatch and editable hexadecimal field; incomplete text remains local until valid.
+pub(crate) fn color_hex_field(ui: &mut Ui, rgb: &mut [u8; 3], mixed: Option<&str>) -> Response {
+    let id = ui.id().with(("color_hex", label(ui)));
+    let current = format!("#{:02X}{:02X}{:02X}", rgb[0], rgb[1], rgb[2]);
+    let is_mixed = mixed.is_some();
+    let initial = || if is_mixed { String::new() } else { current.clone() };
+    let (observed, was_mixed, mut hex) = ui.ctx().data(|d| d.get_temp::<([u8; 3], bool, String)>(id)).unwrap_or_else(|| (*rgb, is_mixed, initial()));
+    if observed != *rgb || was_mixed != is_mixed {
+        hex = initial();
+    }
+    let mut response = color_field(ui, rgb);
+    if response.changed() {
+        hex = format!("#{:02X}{:02X}{:02X}", rgb[0], rgb[1], rgb[2]);
+    }
+    let mut field = super::bounded_cell_editor(ui, id.with("field"), &mut hex, mixed.unwrap_or("#RRGGBB"), false, 32);
+    scenario::publish_target(&format!("dialog:color_hex:{}", label(ui)), field.rect);
+    let mut valid = false;
+    if field.changed() {
+        let text = hex.trim();
+        let digits = text.strip_prefix('#').unwrap_or(text);
+        if digits.len() == 6
+            && let Ok(value) = u32::from_str_radix(digits, 16)
+        {
+            *rgb = [(value >> 16) as u8, (value >> 8) as u8, value as u8];
+            valid = true;
+            response.mark_changed();
+        }
+    }
+    field.flags.set(egui::response::Flags::CHANGED, valid);
+    ui.ctx().data_mut(|d| d.insert_temp(id, (*rgb, is_mixed, hex)));
+    response.union(field)
+}
+
 /// Popover body, also rendered independently by the gallery. Format is global, alpha is opaque.
 /// Tokens: form_card_width, control_*, form_*, on_accent, border, radius_xl, font_small, space_*.
 pub(crate) fn color_popover(ui: &mut Ui, rgb: &mut [u8; 3]) -> bool {

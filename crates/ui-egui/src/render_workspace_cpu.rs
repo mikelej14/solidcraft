@@ -127,7 +127,9 @@ pub(super) enum Environment {
 
 #[derive(Clone, Debug)]
 pub(super) struct View {
+    #[cfg(test)]
     pub selected_body: Option<String>,
+    #[cfg(test)]
     pub body_filter: String,
     pub environment: Environment,
     pub hdr: hdr::Input,
@@ -164,7 +166,9 @@ pub(super) struct Checked {
 impl Default for View {
     fn default() -> Self {
         Self {
+            #[cfg(test)]
             selected_body: None,
+            #[cfg(test)]
             body_filter: String::new(),
             environment: Environment::None,
             hdr: hdr::Input::default(),
@@ -322,6 +326,7 @@ pub(super) fn params(app: &SolveApp, params: &mut Value) -> Result<(), String> {
     Ok(())
 }
 
+#[cfg(test)]
 pub(super) fn controls(app: &mut SolveApp, ui: &mut egui::Ui) {
     for (id, key, section) in [
         ("render_cpu_reflections", "render.cpu_reflections", 0),
@@ -338,6 +343,7 @@ pub(super) fn controls(app: &mut SolveApp, ui: &mut egui::Ui) {
     ui.small(app.tr("render.cpu_runtime_help"));
 }
 
+#[cfg(test)]
 pub(super) fn reflection_controls(app: &mut SolveApp, ui: &mut egui::Ui) {
     ui.small(app.tr("render.cpu_reflection_help"));
     let entries = app.render_workspace.view.raytrace.reflections.as_ref().map(|r| r.bodies.clone()).unwrap_or_default();
@@ -413,13 +419,16 @@ pub(super) fn reflection_controls(app: &mut SolveApp, ui: &mut egui::Ui) {
     {
         app.set_status(error, true);
     }
+    reflection_sampling_controls(app, ui);
+}
+
+/// Existing global reflection budget, shared during the Sampling-editor migration.
+pub(super) fn reflection_sampling_controls(app: &mut SolveApp, ui: &mut egui::Ui) {
     let depth = app.tr("render.cpu_reflection_depth").to_string();
     let samples = app.tr("render.cpu_reflection_samples").to_string();
     if let Some(reflections) = &mut app.render_workspace.view.raytrace.reflections {
-        ui.label(depth);
-        ui_kit::number_field(ui, &mut reflections.max_bounces, 1..=8, 1.0, "");
-        ui.label(samples);
-        ui_kit::number_field(ui, &mut reflections.samples, 1..=64, 1.0, "");
+        ui_kit::row(ui, &depth, |ui| ui_kit::number_field(ui, &mut reflections.max_bounces, 1..=8, 1.0, ""));
+        ui_kit::row(ui, &samples, |ui| ui_kit::number_field(ui, &mut reflections.samples, 1..=64, 1.0, ""));
     } else {
         ui.small(app.tr("render.cpu_reflection_empty"));
     }

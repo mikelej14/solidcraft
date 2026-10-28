@@ -818,6 +818,7 @@ fn occurrence_items(app: &SolveApp, path: &[u64]) -> Vec<Item> {
                 item.params = Some(json!({"component": placement.component, "occurrence": placement.occurrence, "path": path}));
                 item.enabled = app.session.active_occurrence_path.as_deref() != Some(path);
             }
+            "ui.editInPlace" => item.params = Some(json!({"component": placement.component, "path": path})),
             "occurrence.ground" => {
                 item.label = if placement.grounded { "Unground" } else { "Ground" }.into();
                 item.params = Some(json!({"occurrence": placement.occurrence, "grounded": !placement.grounded}));
@@ -892,6 +893,7 @@ fn component_items(app: &SolveApp, id: u64) -> Vec<Item> {
         let oid = occ.map(|o| o.id).unwrap_or(0);
         v.push(act("ui.activate", "Activate", "component").with(json!({ "component": id })).on(!active));
         if doc.links.contains_key(&id) {
+            v.push(act("ui.editInPlace", "Edit in Place", "edit").with(json!({ "component": id })));
             v.push(act("ui.openLinkedDesign", "Open Linked Design", "open").with(json!({ "component": id })));
         }
         v.push(cmd(app, "occurrence.ground", if grounded { "Unground" } else { "Ground" }).with(json!({ "occurrence": oid, "grounded": !grounded })));
@@ -1427,6 +1429,12 @@ pub fn run_item(app: &mut SolveApp, item: &Item, at: Pos2) {
         "ui.activate" => {
             if id_of(&p, "component").is_some() {
                 let _ = app.run("component.activate", p);
+            }
+        }
+        "ui.editInPlace" => {
+            if let Some(component) = id_of(&p, "component") {
+                let path = p["path"].as_array().map(|path| path.iter().filter_map(Value::as_u64).collect());
+                crate::edit_in_place::open(app, component, path);
             }
         }
         "ui.openLinkedDesign" => {

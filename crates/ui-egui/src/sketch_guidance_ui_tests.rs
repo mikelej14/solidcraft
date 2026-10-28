@@ -263,3 +263,94 @@ fn sketch_modify_keeps_custom_point_ids_that_contain_colons() {
     }
     assert_eq!(h.app.session.world_state().sketch(1).unwrap().sketch.curves.len(), 8);
 }
+
+fn tracking_fixture() -> Harness {
+    let mut h = Harness::new();
+    h.app.home.open = false;
+    h.app.preferences.look_at_anim = false;
+    for (command, params) in [
+        ("sketch.create", json!({"plane":"XY"})),
+        ("sketch.rectangle.two_point", json!({"p0":[-30,-20],"p1":[30,20]})),
+        ("sketch.circle.center", json!({"center":[-10,3],"radius":7})),
+    ] {
+        h.app.run(command, params).unwrap();
+    }
+    h.call("ui.view", json!({"view":"top"}));
+    h.call("ui.camera", json!({"target":[-30,0,0],"distance":180}));
+    h.frames(3);
+    h
+}
+
+#[test]
+fn centre_and_midpoint_tracking_is_visual_in_idle_and_drawing_modes() {
+    use solidcraft_engine::geom::Vec2;
+    let mut h = tracking_fixture();
+    let before = h.app.session.doc.to_json();
+    let undo = h.app.session.undo.len();
+    for tool in [None, Some("sketch.line"), Some("sketch.circle.center")] {
+        if let Some(tool) = tool {
+            h.app.start(tool);
+        }
+        for (anchor, end) in [([-10.0, 3.0], [20.0, 3.0]), ([0.0, 20.0], [0.0, -10.0]), ([30.0, 0.0], [-10.0, 0.0])] {
+            step(&mut h, json!({"move":{"sketch":anchor}}));
+            step(&mut h, json!({"move":{"sketch":end}}));
+            let (a, b) = h.app.viewport.tracking.guide.expect("centre/MID guide");
+            assert!(a.dist(Vec2::new(anchor[0], anchor[1])) < 1e-4);
+            assert!(b.dist(Vec2::new(end[0], end[1])) < 1e-4);
+            step(&mut h, json!({"move":{"sketch":[15,12]}}));
+            assert!(h.app.viewport.tracking.guide.is_none(), "off-axis hides the guide");
+        }
+        step(&mut h, json!({"key":"Escape"}));
+    }
+    assert_eq!(h.app.session.doc.to_json(), before, "guides add no geometry or constraints");
+    assert_eq!(h.app.session.undo.len(), undo);
+}
+
+#[test]
+fn tracking_clears_on_escape_sketch_exit_and_preference_and_respects_suppression() {
+    let mut h = tracking_fixture();
+    for action in ["suppression", "preference", "escape", "exit"] {
+        step(&mut h, json!({"move":{"sketch":[-10,3]}}));
+        step(&mut h, json!({"move":{"sketch":[20,3]}}));
+        assert!(h.app.viewport.tracking.guide.is_some());
+        match action {
+            "suppression" => step(&mut h, json!({"move":{"sketch":[20,3]},"alt":true})),
+            "preference" => {
+                h.call("ui.prefs", json!({"sketch_tracking_guides":false}));
+                h.frames(2);
+            }
+            "escape" => step(&mut h, json!({"key":"Escape"})),
+            _ => {
+                h.app.run("sketch.finish", json!({})).unwrap();
+                h.frames(2);
+            }
+        }
+        assert!(h.app.viewport.tracking.guide.is_none(), "{action}");
+        if action == "exit" {
+            break;
+        }
+        if action == "preference" {
+            h.call("ui.prefs", json!({"sketch_tracking_guides":true}));
+        }
+        step(&mut h, json!({"move":{"sketch":[15,12]}}));
+    }
+}
+
+#[test]
+fn tracking_does_not_leak_outside_the_viewport_or_into_another_sketch() {
+    let mut h = tracking_fixture();
+    step(&mut h, json!({"move":{"sketch":[-10,3]}}));
+    step(&mut h, json!({"move":{"sketch":[20,3]}}));
+    assert!(h.app.viewport.tracking.guide.is_some());
+    h.call("ui.move", json!({"x":0,"y":0}));
+    assert!(h.app.viewport.tracking.guide.is_none());
+    step(&mut h, json!({"move":{"sketch":[20,3]}}));
+    assert!(h.app.viewport.tracking.guide.is_none(), "leaving requires acquiring a reference again");
+    step(&mut h, json!({"move":{"sketch":[-10,3]}}));
+    step(&mut h, json!({"move":{"sketch":[20,3]}}));
+    assert!(h.app.viewport.tracking.guide.is_some());
+    h.app.run("sketch.finish", json!({})).unwrap();
+    h.app.run("sketch.create", json!({"plane":"XY"})).unwrap();
+    h.frames(3);
+    assert!(h.app.viewport.tracking.guide.is_none());
+}

@@ -3,6 +3,9 @@
 A sketch lies on a plane: an origin plane, a construction plane or a planar face. Start one with
 **Create Sketch** (`sketch.create`) and click a plane, or pick a face first. Right-clicking a
 plane, in the view or on its browser row, offers **Create Sketch** on that plane too.
+While Create Sketch waits for its plane, the origin planes are shown, and the plane under the
+pointer (in the view, or its row in the browser) lights up and takes the grid, so you see which
+plane the sketch will lie on before you click.
 **Finish Sketch** returns to the model. **Cancel Sketch** (`sketch.cancel`) returns without
 keeping what changed since the sketch was created or opened for editing: a new sketch is removed,
 an edited one goes back to how it was, as one step that Undo brings back.
@@ -25,6 +28,14 @@ Profile shading follows those curves while preserving holes. Zooming changes the
 without changing sketch geometry, dimensions, or undo history.
 On short windows or enlarged displays, the Sketch Palette's options scroll while its
 constraint status and **Finish Sketch** button remain visible.
+
+Hover over a circle or arc centre, or the midpoint of a straight sketch edge, then move
+horizontally or vertically to see a dotted alignment guide. The guide connects that reference
+to the cursor's projection on the sketch axis, within the viewport; it disappears when you
+move away from the axis. This works while editing and before a drawing tool's first click.
+It adds no geometry or constraints. Esc, leaving the viewport, or ending the sketch clears
+the reference. Preferences › Sketch › **Center and midpoint alignment guides** turns it off;
+the configured snap-suppression modifier also hides it.
 
 ## Geometry
 
@@ -243,6 +254,20 @@ To change a dimension you already have, double-click it, or, with Sketch Dimensi
 nothing picked yet, click it once: its value box opens with the value selected, Enter applies,
 and the tool stays on for the next dimension. The dimension's text always takes the click; its
 lines take it only away from sketch points and curves, which still start a new dimension.
+
+To have shapes dimensioned as you draw them, turn on **Dimension new shapes** in Preferences ›
+Sketch (it is off by default). Each line, rectangle, circle, arc, slot or polygon you draw then
+gets all its dimensions at the sizes you drew: a line its length and angle, a rectangle its width
+and height, a circle its diameter, and so on. Values you type in the drawing boxes win, and a size
+the sketch already sets (the angle of a line that snapped horizontal) is left out. The shape and
+its dimensions are one undo step. In scripts, `sketch.draw.dimensioned` takes `"as_drawn": true`.
+
+Tick **Also place them from the origin (fully constrained)** as well, and each new shape is also
+dimensioned from the sketch origin until nothing of it is left free: a horizontal and a vertical
+distance to its centre or first point, and one more where the shape could still turn (a polygon,
+a rectangle drawn at an angle). A shape already attached to the origin or to geometry that is
+placed gets none, and a point on an axis is put on that axis rather than given a 0 distance.
+In scripts: `"locate": true`.
 
 Between two points, or on a line, that don't line up with an axis, where you place the
 dimension picks what it measures: across from them, the distance between them; above or below

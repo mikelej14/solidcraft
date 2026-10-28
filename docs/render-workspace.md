@@ -30,7 +30,8 @@ Render, Cancel and the shared command search (S) occupy the top row. The Pick co
 icon-text Body/Face/Component segments, Paint/Pick Up actions and direct-light
 preview information chip occupy Look's second row with 8 pt side padding. Changing the
 light coordinate frame remains disabled with its reason in this checkout. Frame
-uses the existing explicit camera command for projection; Output shows the current
+uses the existing explicit camera command for projection and the registered Save Shot
+action opens the shared naming confirmation; Output shows the current
 size/format and directs edits to the Output Inspector. No completion ticks are inferred.
 
 The Browser and Inspector float in both shell layouts and share a top edge, 8 pt
@@ -129,38 +130,52 @@ half-edge vectors specify their geometry in millimetres; radiance is linear RGB.
 An environment map replaces the constant environment term. The path integrator uses
 the published emitter/BSDF MIS contract.
 
-### GPU image materials
+### Appearance editor and body optics
 
-The GPU image materials section assigns runtime optics to whole visible scene bodies.
-Refresh the authoritative body list, explicitly choose a body, and add its assignment.
-The captured ordinal and exact name must match; a document identity or revision change
-requires explicit revalidation. A removed, renamed or reordered body cannot silently
-receive another body's settings. The editor uses weak document identity references, so
-stale assignments do not retain historical documents. The normal Appearance and material
-library dialogs keep their existing behavior.
+Picking a face, body or component opens Appearance. Its kind chips, look card and
+Applies to scope lead to Edit: colour, finish, metallic, roughness, opacity and IOR.
+The look card's source tag opens the inheritance chain. Reset restores the picked
+target's values from when it was opened; Save to library uses the existing design
+library export flow.
 
-Glass, clear coat and planar maps have separate collapsible controls. Six original glass
-recipes come directly from the starter pack: linear transmittance over the recipe's
-reference distance becomes absorption per millimetre via `-ln(T) / distance`. Selecting
-one never changes saved opacity or assigns a scalar appearance. The swatch shows the
-recipe's transmittance, not a rendered preview. Manual IOR, RGB absorption, thin-sheet
-thickness and straight-shadow transmission are available. Closed solids derive optical
-distance from geometry; full topology, orientation, overlap and optical-boundary checks
-run during GPU preparation. Successful Check does not certify those geometric properties.
+Glass and absorption (GPU), Clear coat (GPU), Maps (GPU), Saved with this shot,
+and Reflections (CPU) follow in that order and start collapsed. Unsupported
+methods remain visible with an explanation; opening a section never changes the
+renderer. Optical bindings currently target one whole visible body, so face,
+component and multiple-body picks show the same controls disabled with a reason.
+The Browser command has no Wear selection kind yet, so no Open Wear link is shown.
 
-Clear coat exposes weight, roughness and IOR over the existing opaque base. Runtime maps
-accept bounded local PNG/JPEG base-color sRGB and OpenGL +Y normal images, normal strength,
-and orthogonal world-space origin/U/V vectors in millimetres. Each vector spans one full
-repeat. The backend's 1024×1024 per-map, 16 MiB encoded-total and 128-repeat bounds remain.
-Glass cannot share one body with coat or maps. Limits are eight glass bodies, 64 coat
-bodies and 16 mapped bodies, within a maximum of 64 editor assignments.
+The old Appearance page retains explicit target selection and the library/reference
+and wear controls awaiting their own editors. Its body optics use the same sections
+as the picked-body editor. Scene ordinal, exact name, stable target and document
+identity are checked; a document revision change requires Revalidate this body.
 
-All these controls are temporary per-document-tab state, explicitly labelled in the UI.
-They are not saved in the design, render setup or portable material library. Disable the
-overrides before choosing a CPU method; active GPU assignments cause Check/Start to
-refuse a CPU request. Both buttons submit the same freshly validated runtime parameters,
-and file contents are captured by the engine at that boundary. File-picker completion
-checks the original document, revision and body identity before accepting the path.
+Six original glass recipes use linear transmittance over a reference distance to
+compute absorption per millimetre via -ln(T) / distance. Glass exposes boundary,
+IOR, thickness, RGB absorption, straight shadow transmission and closed-solid
+interior scattering. Thickness is disabled for closed glass, which uses geometric
+distance. Glass cannot share a body with coat or maps. Full topology, orientation,
+overlap and optical-boundary checks run during GPU preparation; Check does not
+certify those properties.
+
+Clear coat retains weight, roughness and IOR. Maps retain the bounded PNG/JPEG
+picker flow for base colour, normal, metallic and roughness images, world-space
+origin and U/V repeat vectors, normal strength, V orientation and base replacement.
+The backend's map-size, encoded-byte, repeat and assignment limits still apply.
+File-picker completion checks the original document, revision and body identity.
+
+These local overrides are temporary on the document tab. Save these optics uses
+render.optics.bind to save physical glass with the shot; replacement requires the
+explicit Replace this body's saved optics checkbox. Coat and local image maps
+remain temporary, and the save action explains that limit. Remove saved opens the
+shared Remove saved optics? confirmation before render.optics.unbind; stale
+confirmations cannot affect a changed document. Saved authored surface bindings
+remain manageable in Saved with this shot. Reflections retains this body's
+Off/Mirror/Rough CPU binding and explicit target confirmation.
+
+Active GPU overrides still cause Check/Start to refuse a CPU request. Both buttons
+submit the same freshly validated runtime parameters and the engine captures file
+contents at that boundary.
 
 Check and Start build the same request from the current product camera, size and
 selected method, including when Render Result is open. Every click revalidates host
@@ -397,3 +412,16 @@ as before; the focus state is available to a later Inspector change.
 Look expands Objects, Light expands Lights and Environment, and Frame expands
 Shots. Output leaves expansion unchanged. Stages preserve selection and never
 lock rows or prevent manual expansion.
+
+## Appearance editor
+
+Look shows one Appearance editor with scope, current look, the four-step look
+chain and Edit controls. There is no Inspector page strip. Applies to chooses the
+selected target or every exact user of the look; mixed values remain inert until
+edited. Edit contains colour/hex, finish and metallic/roughness/opacity sliders.
+Advanced reuses the existing surface library, optical bindings, glass, clear coat,
+texture-map, reflection and aging controls. The separate Textures disclosure is
+marked Soon. The shared footer exports the design library through `library.export`
+and resets the current target's override through `appearance.assign`.
+`view.render_inspector {visible}` controls transient per-document visibility;
+selecting a stage reopens the editor. Selection focus routing is deferred.

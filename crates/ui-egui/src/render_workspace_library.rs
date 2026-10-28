@@ -373,7 +373,7 @@ fn preview_parameters(entry: &Value) -> Value {
     }
     source.clone()
 }
-fn tile_sphere(entry: &Value) -> ui_kit::Sphere {
+pub(super) fn tile_sphere(entry: &Value) -> ui_kit::Sphere {
     let p = preview_parameters(entry);
     let color = crate::dialogs_appearance::parse_color(&p["color"]).map(|[r, g, b]| egui::Color32::from_rgb(r, g, b)).unwrap_or(Tokens::get().body);
     let scalar = |key: &str, default: f64| p["pbr"][key].as_f64().filter(|v| v.is_finite()).unwrap_or(default).clamp(0.0, 1.0);
@@ -461,6 +461,7 @@ pub(super) fn card(app: &mut SolveApp, ui: &mut egui::Ui, bounds: egui::Rect) {
             bounds,
             fill_height: true,
             compact: crate::render_ui::compact(app, bounds.width()),
+            editor: false,
             enabled: matches!(stage, super::Stage::Look | super::Stage::Light),
             header_actions: (stage == super::Stage::Look).then_some(&mut actions as &mut dyn FnMut(&mut egui::Ui)),
         },
@@ -1037,6 +1038,7 @@ fn source_preview(app: &mut SolveApp, ui: &mut egui::Ui, view: &mut View, id: &s
         ui.small(error);
     }
 }
+#[cfg(test)]
 pub(super) fn controls(app: &mut SolveApp, ui: &mut egui::Ui) {
     stage_controls(app, ui);
     saved_surface_controls(app, ui);
@@ -1252,19 +1254,40 @@ fn resource_controls(app: &mut SolveApp, ui: &mut egui::Ui, view: &mut View, id:
     }
 }
 
+#[cfg(test)]
 pub(super) fn saved_surface_controls(app: &mut SolveApp, ui: &mut egui::Ui) {
     let title = app.tr("render.saved_surfaces").to_string();
+    ui_kit::section(ui, "render_saved_surfaces", &title, false, |ui| saved_surface_content(app, ui, None));
+}
+
+pub(super) fn saved_surface_target_controls(
+    app: &mut SolveApp,
+    ui: &mut egui::Ui,
+    target: Option<&solidcraft_engine::doc::render_surface::RenderBodyTarget>,
+) {
+    if let Some(target) = target {
+        saved_surface_content(app, ui, Some(target));
+    }
+}
+
+fn saved_surface_content(app: &mut SolveApp, ui: &mut egui::Ui, target: Option<&solidcraft_engine::doc::render_surface::RenderBodyTarget>) {
     let bindings = app.render_workspace.view.draft.surfaces.clone();
-    if bindings.is_empty() {
+    if !bindings.iter().any(|b| target.is_none_or(|t| t == &b.target)) {
         return;
     }
-    ui_kit::section(ui, "render_saved_surfaces", &title, false, |ui| {
+    {
         ui_kit::text(ui, app.tr("render.saved_surfaces_help"), ui_kit::Text::Note("render.saved_surfaces_help"));
-        for (index, binding) in bindings.iter().enumerate() {
+        if !app.render_workspace.view.materials.bindings.is_empty() {
+            ui_kit::text(ui, app.tr("render.saved_maps_runtime_conflict"), ui_kit::Text::Note("render.saved_maps_runtime_conflict"));
+        }
+        for (index, binding) in bindings.iter().enumerate().filter(|(_, b)| target.is_none_or(|t| t == &b.target)) {
             ui.label(format!(
                 "{} - {} ({}): {:?}",
                 binding.source.id, binding.target.definition, binding.target.feature, binding.target.occurrence_path
             ));
+            if ui_kit::button(ui, app.tr("render.inspector_replace"), ui_kit::Button::Normal).clicked() {
+                open_category(app, "surfaces");
+            }
             let response = ui_kit::button(ui, app.tr("render.saved_surface_remove"), ui_kit::Button::Normal);
             crate::scenario::publish_handle(&format!("render:saved-surface-remove:{index}"), response.rect.center());
             if response.clicked() {
@@ -1277,9 +1300,10 @@ pub(super) fn saved_surface_controls(app: &mut SolveApp, ui: &mut egui::Ui) {
                 }
             }
         }
-    });
+    }
 }
 
+#[cfg(test)]
 pub(super) fn stage_controls(app: &mut SolveApp, ui: &mut egui::Ui) {
     let title = app.tr("render.passive_stage").to_string();
     ui_kit::section(ui, "render_passive_stage", &title, false, |ui| stage_content(app, ui));
@@ -1415,6 +1439,12 @@ mod studio_browser_tests {
         assert_eq!(h.app.render_workspace.view.library.selected.as_deref(), Some(id.as_str()));
         assert_eq!(h.app.render_workspace.view.inspector.page, super::super::inspector::Page::Appearance);
         assert_eq!(h.app.session.doc.to_json(), before, "browsing and selection must not apply appearances");
+        // The selection-following editor takes precedence; library inspection is
+        // available under Advanced when no model target is selected.
+        h.app.run("select.clear", json!({})).unwrap();
+        h.frames(3);
+        h.step(&json!({"click":{"handle":format!("dialog:section:{}", h.app.tr("render.inspector_advanced"))}})).unwrap();
+        h.frames(3);
         h.step(&json!({"widget":h.app.tr("render.library_favorite")})).unwrap();
         assert!(h.app.preferences.render_library_favorites.contains(&("appearances".into(), id.clone())));
         h.step(&json!({"click":{"handle":"render:library-list"}})).unwrap();

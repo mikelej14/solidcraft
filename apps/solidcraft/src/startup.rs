@@ -302,6 +302,14 @@ pub fn system_title_bar(windows: bool, backends: eframe::wgpu::Backends) -> bool
     windows && backends.contains(Backends::GL) && !backends.intersects(Backends::DX12 | Backends::VULKAN)
 }
 
+/// The `--max-file-size` value (#4086): a size such as `2GB` or `1500MB`, at most 16 GB. It raises
+/// the largest STEP/import and design file this run reads, over the saved preference, without
+/// saving anything. A missing or bad value stops the start with this error.
+pub fn max_file_size(value: Option<&str>) -> Result<u64, String> {
+    let value = value.ok_or("--max-file-size needs a size, for example --max-file-size 2GB")?;
+    solidcraft_engine::io::limits::parse_flag(value).map_err(|e| format!("--max-file-size: {e}"))
+}
+
 /// The message shown when no window could be opened at all.
 pub fn no_window_message(error: &str, settings: Option<&Path>) -> String {
     let folder = settings.map(|d| d.display().to_string()).unwrap_or_else(|| "the SolidCraft settings folder".into());
@@ -322,6 +330,16 @@ mod tests {
 
     fn cards() -> Vec<AdapterChoice> {
         ["Integrated", "Discrete small", "Discrete large"].into_iter().map(|name| AdapterChoice { name: name.into(), compatible: true }).collect()
+    }
+
+    #[test]
+    fn max_file_size_parses_sizes_and_refuses_bad_ones() {
+        assert_eq!(max_file_size(Some("2GB")), Ok(2 << 30));
+        assert_eq!(max_file_size(Some("1500MB")), Ok(1500 << 20));
+        for bad in [None, Some(""), Some("2"), Some("17GB"), Some("lots"), Some("-1GB")] {
+            let error = max_file_size(bad).unwrap_err();
+            assert!(error.contains("--max-file-size"), "{bad:?}: {error}");
+        }
     }
 
     #[test]

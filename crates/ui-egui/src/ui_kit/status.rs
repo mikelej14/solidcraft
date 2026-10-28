@@ -60,3 +60,31 @@ pub(crate) fn progress(ui: &mut egui::Ui, key: &str, fraction: f32) -> egui::Res
     crate::scenario::publish_rect(&format!("dialog:progress:{key}"), bar);
     response
 }
+
+/// Compact completion readout for a strip. The caller owns the result identity.
+/// Tokens: font_small, form_ink/success/dim, control_height and space_4.
+pub(crate) fn completion_text(ui: &mut egui::Ui, label: &str, complete: bool) -> egui::Response {
+    let t = Tokens::get();
+    let font = egui::FontId::proportional(t.font_small);
+    let text = ui.painter().layout_no_wrap(label.to_owned(), font.clone(), t.form_ink);
+    let tick_width = if complete { t.space_14 + t.space_4 } else { 0.0 };
+    let (rect, response) = ui.allocate_exact_size(vec2(text.size().x + tick_width, t.control_height), egui::Sense::hover());
+    if complete {
+        super::checks::paint_check_glyph(
+            ui.painter(),
+            egui::Rect::from_center_size(rect.left_center() + vec2(t.space_14 / 2.0, 0.0), vec2(t.space_14, t.space_14)),
+            false,
+            t.form_success,
+        );
+    }
+    super::text::paint_text(
+        ui,
+        egui::Rect::from_min_max(rect.min + vec2(tick_width, 0.0), rect.max),
+        label,
+        font,
+        if complete { t.form_ink } else { t.form_dim },
+        false,
+    );
+    response.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Label, ui.is_enabled(), label));
+    response
+}

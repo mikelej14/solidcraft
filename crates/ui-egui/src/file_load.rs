@@ -37,7 +37,8 @@ pub enum Kind {
     Recover { id: String, dir: Option<String> },
     /// Export a snapshot of the current design without adopting the worker's session.
     ExportDxf,
-    /// Read the active design's linked designs again (`component.update_links`).
+    /// Read the active design's linked designs again (`component.update_links`, with the
+    /// request's options: `component` reads only that link).
     UpdateLinks,
 }
 
@@ -54,6 +55,9 @@ pub struct Request {
     pub options: serde_json::Map<String, Value>,
     /// Network servers the user allowed for this one request ("Allow once", `network_prompt`).
     pub allow_hosts: Vec<String>,
+    /// The saved design this request is for, when it must not run on another: one shown in its
+    /// place by the time the request starts drops it.
+    pub design: Option<String>,
 }
 
 impl Request {
@@ -65,6 +69,7 @@ impl Request {
             scope: solidcraft_engine::io::vfs::current_scope(),
             options: Default::default(),
             allow_hosts: Vec::new(),
+            design: None,
         }
     }
     fn insert(&self) -> bool {
@@ -83,7 +88,7 @@ impl Request {
             Kind::Insert => (insert_command(&self.path), self.params()),
             Kind::Recover { id, dir } => ("doc.recover", json!({"id": id, "dir": dir})),
             Kind::ExportDxf => ("file.export_view_dxf", Value::Object(self.options.clone())),
-            Kind::UpdateLinks => ("component.update_links", json!({})),
+            Kind::UpdateLinks => ("component.update_links", Value::Object(self.options.clone())),
         }
     }
     fn answer(&self, r: Result<Value, String>) {
@@ -194,6 +199,10 @@ pub struct FileLoad {
 }
 
 impl FileLoad {
+    /// How many more requests can wait.
+    pub(crate) fn room(&self) -> usize {
+        crate::documents::MAX_OPEN.saturating_sub(self.queued.len())
+    }
     /// A file operation is under way: the design waits for it.
     pub fn busy(&self) -> bool {
         self.running.as_ref().is_some_and(|r| !r.cancelled()) || !self.queued.is_empty()
@@ -248,6 +257,8 @@ pub fn begin_request(app: &mut SolveApp, request: Request) -> Result<(), String>
             }
             Kind::Open => {
                 app.open_path(&request.path);
+                // Opened in place of the blank tab it made, with no switch to it.
+                crate::edit_in_place::attach(app);
                 Ok(Value::Null)
             }
             Kind::Recover { .. } => {
@@ -359,7 +370,8 @@ pub fn control(app: &mut SolveApp, req: crate::control::ControlRequest) -> Optio
         options.remove("path");
         options.retain(|_, v| !v.is_null());
     }
-    let _ = begin_request(app, Request { path: path.into(), kind, reply: Some(req.reply.clone()), scope, options, allow_hosts: Vec::new() });
+    let request = Request { path: path.into(), kind, reply: Some(req.reply.clone()), scope, options, allow_hosts: Vec::new(), design: None };
+    let _ = begin_request(app, request);
     None
 }
 
@@ -393,6 +405,10 @@ fn start(app: &mut SolveApp) {
     }
     let Some(request) = app.file_load.queued.pop_front() else { return };
     if reuse_open(app, &request) {
+        return;
+    }
+    if request.design.as_deref().is_some_and(|d| !app.session.path.as_deref().is_some_and(|p| crate::documents::same_path(p, d))) {
+        request.answer(Err("the design it was for is no longer shown".into()));
         return;
     }
     if matches!(request.kind, Kind::Open | Kind::Recover { .. })
@@ -607,7 +623,7 @@ fn step_staged(running: &mut Running) {
         // Parse and walk the file. The reading keeps the watch: its steps report progress and
         // stop on Cancel.
         let read = solidcraft_engine::io::vfs::scoped(scope, || {
-            let bytes = solidcraft_engine::io::vfs::read(&path, solidcraft_engine::io::MAX_STEP_BYTES).map_err(|e| format!("{path}: {e}"))?;
+            let bytes = solidcraft_engine::io::limits::read(&path, solidcraft_engine::io::limits::Kind::Step).map_err(|e| format!("{path}: {e}"))?;
             // The same text the import command makes of the bytes, so it finds this reading.
             let text = String::from_utf8_lossy(&bytes).into_owned();
             solidcraft_engine::doc::progress::watch(progress.clone(), || solidcraft_engine::kernel::StepReading::new(&text))
@@ -889,6 +905,7 @@ pub fn tick(app: &mut SolveApp, ctx: &egui::Context) {
                 let (id, _) = request.command();
                 app.session.accept_computed(made.session);
                 app.big_operation = true;
+                crate::linked_source::read_again(app, request.options.get("component").and_then(Value::as_u64));
                 let r = Ok(made.result);
                 app.finish_command(id, &r);
                 let language = crate::i18n::Locale::for_language(&app.preferences.language);

@@ -45,6 +45,15 @@ pub(super) fn interface(app: &mut SolveApp, ui: &mut egui::Ui, t: &Tokens) {
                     app.preferences.viewport_theme = *view;
                 }
             });
+            // The logo in the theme's own logo colours or in its accent.
+            let label = app.tr("prefs.logo");
+            ui_kit::row(ui, label, |ui| {
+                let labels = [crate::i18n::tr("prefs.logo_theme"), crate::i18n::tr("prefs.logo_accent")];
+                let mut selected = usize::from(app.preferences.logo_accent);
+                if ui_kit::settings_segments(ui, label, &mut selected, &labels) {
+                    app.preferences.logo_accent = selected == 1;
+                }
+            });
             // A theme file another tool writes, reloaded when it changes (#7573).
             if FOLLOW_AVAILABLE {
                 follow_row(app, ui);
@@ -72,6 +81,11 @@ pub(super) fn interface(app: &mut SolveApp, ui: &mut egui::Ui, t: &Tokens) {
                         if ui_kit::segmented(ui, &mut selected, &[app.tr("prefs.labels"), app.tr("prefs.icons_only")], Default::default()) {
                             app.preferences.ribbon_labels = selected == 0;
                         }
+                    });
+                    // The SKETCH tab outside a sketch too (#7904).
+                    ui_kit::row(ui, "", |ui| {
+                        let check = setting::sketch_tab_always(app, ui).on_hover_text(app.tr("prefs.sketch_tab_always_note"));
+                        crate::scenario::publish_target("prefs:sketch_tab_always", check.rect);
                     });
                     // Where every feature dialog puts its OK and Cancel (#6708).
                     ui_kit::row(ui, app.tr("prefs.dialog_buttons"), |ui| {
@@ -168,6 +182,11 @@ pub(super) fn interface(app: &mut SolveApp, ui: &mut egui::Ui, t: &Tokens) {
                         {
                             app.preferences.browser_bodies_folders = *mode;
                         }
+                    });
+                    // What is being edited, the sketch's state and the units, along the bottom (#7243).
+                    ui_kit::row(ui, "", |ui| {
+                        let check = setting::status_bar(app, ui).on_hover_text(app.tr("prefs.status_bar_note"));
+                        crate::scenario::publish_target("prefs:status_bar", check.rect);
                     });
                     ui_kit::text(ui, app.tr("prefs.layout_note"), ui_kit::Text::Hint("layout"));
                     ui_kit::text(ui, app.tr("prefs.history_sketches_note"), ui_kit::Text::Hint("history_sketches"));

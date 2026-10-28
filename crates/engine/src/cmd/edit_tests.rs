@@ -185,7 +185,8 @@ fn redefining_a_blend_replaces_persistent_edge_selection_and_survives_resize() {
 
 /// A redefine computes the features after the edited one once: its trial's results are kept
 /// for the session's own evaluation, though the cache holds only the last state (a large
-/// design's).
+/// design's). The reply reports that one rebuild (#5694): a session that had to compute the
+/// features again would count them twice.
 #[test]
 fn redefining_computes_the_later_features_once() {
     let mut s = Session::default();
@@ -196,9 +197,27 @@ fn redefining_computes_the_later_features_once() {
     *s.model.cache.lock().unwrap() = solidcraft_doc::EvalCache::with_budget(1);
     let reply =
         run(&mut s, "timeline.redefine", json!({"feature": "Base", "command": "solid.box", "params": {"length": 25, "width": 10, "height": 5}}));
-    assert_eq!(reply["recomputed"], 0, "{reply}");
+    assert_eq!((reply["recomputed"].as_u64(), reply["restored"].as_u64()), (Some(4), Some(0)), "{reply}");
     let volume = run(&mut s, "inspect.measure", json!({}))["total"]["volume_mm3"].as_f64().unwrap();
     assert!((volume - (25.0 * 10.0 * 5.0 + 3.0 * 125.0)).abs() < 1e-6, "{volume}");
+}
+
+/// #5694: the reply reports what the redefine rebuilt — the edited feature and the features
+/// after it — not the session's reuse of the trial's own results, which read as "nothing was
+/// rebuilt" and did not match what the same change reports through `timeline.edit`.
+#[test]
+fn redefining_reports_the_features_it_rebuilt() {
+    let mut s = Session::default();
+    run(&mut s, "solid.box", json!({"length": 40, "width": 40, "height": 20, "center": [0, 0, 10], "name": "Block"}));
+    run(&mut s, "solid.hole", json!({"position": [0, 0, 20], "diameter": 6, "depth": 12, "name": "H"}));
+    run(&mut s, "solid.box", json!({"length": 10, "width": 10, "height": 5, "center": [30, 0, 2.5], "operation": "new", "name": "Other"}));
+    let reply = run(
+        &mut s,
+        "timeline.redefine",
+        json!({"feature": "H", "command": "solid.hole",
+               "params": {"position": [0, 0, 20], "type": "counterbore", "diameter": 6, "depth": 12, "cb_diameter": 10, "cb_depth": 4}}),
+    );
+    assert_eq!((reply["recomputed"].as_u64(), reply["restored"].as_u64()), (Some(2), Some(0)), "{reply}");
 }
 
 #[test]
@@ -1281,4 +1300,35 @@ fn select_same_look_uses_resolved_looks_without_document_history_edits_and_refus
     }
     assert!(std::sync::Arc::ptr_eq(&doc, &s.doc));
     assert_eq!(history, (s.undo.len(), s.redo.len(), s.evaluations));
+}
+
+/// A body changed by a few hundred features in a row whose names nothing asks for, then
+/// filleted: reordering or moving an earlier feature evaluates them all again, and the fillet
+/// finds its edge by the names of the body before it, which are worked out from the body before
+/// that, and so on back to the start. That walk recursed once per feature and overflowed the
+/// window thread's stack (1 MB on Windows), ending the app (#7587, #7926). On a thread with that
+/// stack, both moves are made.
+#[test]
+fn a_move_before_a_long_history_of_one_body_fits_a_window_threads_stack() {
+    let mut s = Session::default();
+    run(&mut s, "solid.box", json!({"length": 10, "width": 10, "height": 10, "body_name": "Peg"}));
+    run(&mut s, "solid.box", json!({"length": 10, "width": 10, "height": 10, "corner": [50, 0, 0], "body_name": "Other"}));
+    for i in 0..300 {
+        run(&mut s, "solid.move", json!({"bodies": ["Peg"], "translate": [0, 0, if i % 2 == 0 { 1 } else { -1 }]}));
+    }
+    run(&mut s, "solid.fillet", json!({"body": "Peg", "radius": 1, "edges": [[5, 0, 10]]}));
+    let other = s.doc.features.get(1).map(|f| f.id).unwrap();
+    let fillet = s.doc.features.last().map(|f| f.id).unwrap();
+    let moved = std::thread::Builder::new()
+        .stack_size(1024 * 1024)
+        .spawn(move || {
+            run(&mut s, "timeline.reorder", json!({"feature": other, "position": 0}));
+            assert!(s.model.result(fillet).is_some_and(|r| r.error.is_none()), "the fillet is made after the reorder");
+            run(&mut s, "timeline.move_many", json!({"features": [other], "position": 2}));
+            assert_eq!(s.doc.features.get(1).map(|f| f.id), Some(other));
+            assert!(s.model.result(fillet).is_some_and(|r| r.error.is_none()), "the fillet is made after the move");
+        })
+        .unwrap()
+        .join();
+    assert!(moved.is_ok());
 }

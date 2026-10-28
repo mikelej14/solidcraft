@@ -607,3 +607,70 @@ fn frame_rate_readout_stays_beside_a_right_pane() {
         in_corner(&h);
     }
 }
+
+/// The View angles readout (#6032) sits under the orientation gizmo only while View ▸ View angles
+/// is on, follows the view live with its projection, and its card turns the view to typed angles
+/// through `view.apply`, without touching the design or its history.
+#[test]
+fn view_angles_readout_shows_only_when_on_and_applies_typed_angles() {
+    use solidcraft_engine::render::ViewAngles;
+    for style in ["axes", "cube"] {
+        let mut h = Harness::new();
+        h.call("ui.prefs", json!({"navigator_style": style}));
+        h.app.preferences.look_at_anim = false;
+        h.settle();
+        let design = h.app.session.doc.to_json();
+        assert!(!h.app.preferences.show_view_angles, "off by default");
+        assert!(crate::scenario::rect_of("view_angles:readout").is_none());
+        // View ▸ View angles runs view.angle_readout.
+        let view = crate::scenario::handle_at("nav:view").unwrap();
+        h.call("ui.click", json!({"x": view.x, "y": view.y}));
+        let check = crate::scenario::handle_at("view:view_angles").unwrap();
+        h.call("ui.click", json!({"x": check.x, "y": check.y}));
+        assert!(h.app.preferences.show_view_angles);
+        h.call("ui.click", json!({"x": view.x, "y": view.y}));
+        h.call("ui.view", json!({"view": "front"}));
+        h.settle();
+        let readout = crate::scenario::rect_of("view_angles:readout").expect("the readout shows once it is on");
+        let axis = crate::scenario::rect_of("axis_view:outer").unwrap();
+        assert!(
+            readout.top() >= axis.bottom() && readout.right() <= axis.right() && readout.right() > axis.center().x,
+            "{style}: {readout:?} under {axis:?}"
+        );
+        let lines = |h: &Harness| crate::view_angles::lines(&h.app);
+        assert_eq!(lines(&h), ("Pitch 0.0° · Yaw 0.0° · Roll 0.0°".to_string(), "Ortho".to_string()));
+        h.call("ui.view", json!({"view": "right"}));
+        h.app.ui.perspective = true;
+        h.settle();
+        assert_eq!(lines(&h), ("Pitch 0.0° · Yaw -90.0° · Roll 0.0°".to_string(), "Persp".to_string()));
+        h.call("ui.view", json!({"view": "top"}));
+        h.settle();
+        assert_eq!(lines(&h).0, "Pitch 90.0° · Yaw 0.0° · Roll 0.0°");
+        // A click on the readout opens the card with the current angles; Apply turns the view.
+        let camera = h.app.cam;
+        h.call("ui.click", json!({"x": readout.center().x, "y": readout.center().y}));
+        assert_eq!(h.app.cam, camera, "the click opens the card, it does not move the view");
+        assert!(crate::scenario::rect_of("view_angles:card").is_some());
+        let draft = h.ctx.data(|d| d.get_temp::<ViewAngles>(crate::view_angles::draft_id())).expect("the card holds the typed angles");
+        assert!((draft.pitch - 90.0).abs() < 1e-3 && draft.yaw == 0.0 && draft.roll == 0.0, "{draft:?}");
+        h.ctx.data_mut(|d| d.insert_temp(crate::view_angles::draft_id(), ViewAngles { yaw: 30.0, pitch: 15.0, roll: -10.0 }));
+        h.frame();
+        let apply = crate::scenario::handle_at("dialog:button:Apply").unwrap();
+        h.call("ui.click", json!({"x": apply.x, "y": apply.y}));
+        h.settle();
+        let a = h.app.cam.view_angles();
+        assert!((a.yaw - 30.0).abs() < 1e-9 && (a.pitch - 15.0).abs() < 1e-9 && (a.roll + 10.0).abs() < 1e-9, "{a:?}");
+        assert_eq!((h.app.cam.target, h.app.cam.distance), (camera.target, camera.distance), "only the orientation changes");
+        assert_eq!(lines(&h).0, "Pitch 15.0° · Yaw 30.0° · Roll -10.0°");
+        // A click elsewhere closes the card; the command turns the readout off again.
+        let centre = h.app.viewport.rect.unwrap().center();
+        h.call("ui.click", json!({"x": centre.x, "y": centre.y}));
+        assert!(crate::scenario::rect_of("view_angles:card").is_none());
+        h.call("engine.execute", json!({"command": "view.angle_readout", "params": {"enabled": false}}));
+        h.settle();
+        assert!(!h.app.preferences.show_view_angles);
+        assert!(crate::scenario::rect_of("view_angles:readout").is_none());
+        assert_eq!(h.app.session.doc.to_json(), design);
+        assert!(h.app.session.undo.is_empty());
+    }
+}

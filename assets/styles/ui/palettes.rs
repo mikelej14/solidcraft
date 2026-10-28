@@ -193,8 +193,10 @@ impl Tokens {
             sketch_halo: Color32::from_rgb(240, 243, 247),
             sketch_point: Color32::BLACK,
             sketch_locked: Color32::from_rgb(0, 140, 60),
-            dimension: Color32::from_rgb(36, 40, 48),
-            dimension_driven: Color32::from_rgb(120, 126, 138),
+            // Sketch dimensions in a plum of their own, apart from the blue and black curves for
+            // every colour vision mode (#7861).
+            dimension: Color32::from_rgb(130, 42, 110),
+            dimension_driven: Color32::from_rgb(160, 90, 120),
             sketch_point_free: Color32::from_rgb(30, 90, 200),
             section_cap: Color32::from_rgb(214, 128, 72),
             dialog_bg: Color32::from_rgb(250, 251, 252),
@@ -358,8 +360,9 @@ impl Tokens {
         t.sketch_halo = Color32::from_rgb(28, 32, 40);
         t.sketch_point = Color32::from_rgb(232, 234, 238);
         t.sketch_locked = Color32::from_rgb(96, 204, 116);
-        t.dimension = Color32::from_rgb(224, 228, 234);
-        t.dimension_driven = Color32::from_rgb(142, 150, 164);
+        // Sketch dimensions: Light's plum, lightened for the dark view (#7861).
+        t.dimension = Color32::from_rgb(224, 176, 224);
+        t.dimension_driven = Color32::from_rgb(176, 104, 144);
         t.sketch_point_free = Color32::from_rgb(92, 150, 255);
         t.profile_fill = Color32::from_rgba_unmultiplied_const(120, 150, 200, 40);
         t.dialog_bg = Color32::from_rgb(39, 43, 52);

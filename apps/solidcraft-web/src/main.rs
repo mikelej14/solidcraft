@@ -353,7 +353,8 @@ mod web {
             }
             let mut act: Option<(&'static str, String)> = None;
             let closed = solidcraft_ui_egui::ui_kit::Window::new(egui::Id::new("sc_browser_files"), "folder", "Files in this browser")
-                .cards(3.0)
+                // Room for long names; the kit still caps the window at the browser's width.
+                .cards(4.0)
                 .show_body(ctx, |ui| {
                     ui.horizontal(|ui| {
                         if ui_kit::button(ui, "Open from computer…", ui_kit::Button::Normal).clicked() {
@@ -381,61 +382,62 @@ mod web {
                         return;
                     }
                     let entries = self.files.entries.borrow().clone();
-                    if entries.is_empty() {
-                        ui.label("Designs you save appear here. They stay in this browser.");
-                    }
                     egui::ScrollArea::vertical().max_height(360.0).show(ui, |ui| {
-                        egui::Grid::new("opfs_files").num_columns(3).spacing([12.0, 6.0]).show(ui, |ui| {
+                        // The name takes the width the size and the actions leave (#8097).
+                        let empty = "Designs you save appear here. They stay in this browser.";
+                        ui_kit::name_list(ui, "opfs_files", &["Name", "Size", "Actions"], empty, |list| {
                             for e in &entries {
-                                match &mut self.renaming {
-                                    Some((from, to)) if *from == e.name => {
-                                        let r = ui_kit::cell_editor(ui, ui.make_persistent_id(("stored_file_name", from.as_str())), to, "", false);
-                                        if std::mem::take(&mut self.rename_focus) {
-                                            r.request_focus();
+                                list.row(&e.name, |row| {
+                                    match &mut self.renaming {
+                                        Some((from, to)) if *from == e.name => row.cell(|ui| {
+                                            let r =
+                                                ui_kit::cell_editor(ui, ui.make_persistent_id(("stored_file_name", from.as_str())), to, "", false);
+                                            if std::mem::take(&mut self.rename_focus) {
+                                                r.request_focus();
+                                            }
+                                            if r.lost_focus() {
+                                                act = Some(if ui.input(|i| i.key_pressed(egui::Key::Enter)) {
+                                                    ("rename", to.clone())
+                                                } else {
+                                                    ("rename_cancel", String::new())
+                                                });
+                                            }
+                                        }),
+                                        _ => {
+                                            row.name(&e.name);
                                         }
-                                        if r.lost_focus() {
-                                            act = Some(if ui.input(|i| i.key_pressed(egui::Key::Enter)) {
-                                                ("rename", to.clone())
-                                            } else {
-                                                ("rename_cancel", String::new())
-                                            });
+                                    }
+                                    row.cell(|ui| ui.label(format!("{:.1} KB", e.size as f64 / 1024.0)));
+                                    row.cell(|ui| {
+                                        if ui_kit::button(ui, "Open", ui_kit::Button::Small).clicked() {
+                                            act = Some(("open", e.name.clone()));
                                         }
-                                    }
-                                    _ => {
-                                        ui.label(&e.name);
-                                    }
-                                }
-                                ui.label(format!("{:.1} KB", e.size as f64 / 1024.0));
-                                ui.horizontal(|ui| {
-                                    if ui_kit::button(ui, "Open", ui_kit::Button::Small).clicked() {
-                                        act = Some(("open", e.name.clone()));
-                                    }
-                                    let design = solidcraft_engine::io::is_design_path(&e.name);
-                                    if !design
-                                        && ui_kit::button(ui, "Insert", ui_kit::Button::Small)
-                                            .on_hover_text(solidcraft_ui_egui::i18n::tr("web.files.insert_stored_drawings_hint"))
+                                        let design = solidcraft_engine::io::is_design_path(&e.name);
+                                        if !design
+                                            && ui_kit::button(ui, "Insert", ui_kit::Button::Small)
+                                                .on_hover_text(solidcraft_ui_egui::i18n::tr("web.files.insert_stored_drawings_hint"))
+                                                .clicked()
+                                        {
+                                            act = Some(("insert", e.name.clone()));
+                                        }
+                                        if ui_kit::button(ui, "Rename", ui_kit::Button::Small).clicked() {
+                                            self.renaming = Some((e.name.clone(), e.name.clone()));
+                                            self.rename_focus = true;
+                                        }
+                                        if ui_kit::button(ui, "Save to computer…", ui_kit::Button::Small)
+                                            .on_hover_text("A copy in a file you choose; the stored design stays here")
                                             .clicked()
-                                    {
-                                        act = Some(("insert", e.name.clone()));
-                                    }
-                                    if ui_kit::button(ui, "Rename", ui_kit::Button::Small).clicked() {
-                                        self.renaming = Some((e.name.clone(), e.name.clone()));
-                                        self.rename_focus = true;
-                                    }
-                                    if ui_kit::button(ui, "Save to computer…", ui_kit::Button::Small)
-                                        .on_hover_text("A copy in a file you choose; the stored design stays here")
-                                        .clicked()
-                                    {
-                                        act = Some(("save_copy", e.name.clone()));
-                                    }
-                                    if ui_kit::button(ui, "Download", ui_kit::Button::Small).clicked() {
-                                        act = Some(("download", e.name.clone()));
-                                    }
-                                    if ui_kit::button(ui, "Delete", ui_kit::Button::Small).clicked() {
-                                        act = Some(("delete", e.name.clone()));
-                                    }
+                                        {
+                                            act = Some(("save_copy", e.name.clone()));
+                                        }
+                                        if ui_kit::button(ui, "Download", ui_kit::Button::Small).clicked() {
+                                            act = Some(("download", e.name.clone()));
+                                        }
+                                        if ui_kit::button(ui, "Delete", ui_kit::Button::Small).clicked() {
+                                            act = Some(("delete", e.name.clone()));
+                                        }
+                                    });
                                 });
-                                ui.end_row();
                             }
                         });
                     });

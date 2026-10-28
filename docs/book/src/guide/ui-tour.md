@@ -80,6 +80,13 @@
   top right while a dialog or a sketch is open, and moves the axis view or cube down below them.
   With a dialog open they do what its OK and Cancel do (the check is grey whenever OK is); in a
   sketch without a dialog they are Finish Sketch and Cancel Sketch.
+  **View angles** in the navigation bar's View menu (or Preferences › Graphics, or the
+  `view.angle_readout` command) shows the view's pitch, yaw and roll in degrees under the axis
+  view, with **Ortho** or **Persp** for the projection; it is off by default and updates as the
+  view turns. The angles turn about the up axis: yaw 0° is the Front view, 90° Left, −90° Right
+  and 180° Back; pitch 90° is the Top view and −90° the Bottom; a positive roll turns the model
+  clockwise on screen. Click the readout to type exact angles; **Apply** turns the view there
+  (it keeps the view's centre and zoom). Scripts set the same angles in radians with `view.apply`.
   Right-click for the marking menu: eight commands around the cursor, plus a
   menu for whatever is under it. Near the window's bottom or right edge a menu opens above or
   to the left of the cursor, so it stays in view.
@@ -108,6 +115,12 @@
   selects it, and while the marker sits between a sketch and its feature, or the two are in
   different folders, the sketch keeps a row of its own. The timeline along the bottom always lists
   features in creation order.
+- **Status bar** (off by default: Preferences › Interface › **Status bar**). A thin bar along
+  the window's bottom edge, below the timeline. From the right: the design's units (click them
+  to change the design's units, one undo step), the open sketch's state in its colour (under
+  constrained with its degrees of freedom, fully constrained, constraints conflict) and what is
+  being edited (Editing Sketch1, or Editing Extrude1 while that feature's dialog is open). While
+  it is on, the sketch's state no longer shows in the view's top-left corner.
 - **Command search (S).** Click the ribbon search field or press S to open the search popup
   below it. Results group commands by their ribbon path and show matching features and user
   parameters from this design. With an empty query, recent commands appear first, followed by
@@ -150,7 +163,7 @@ History at the bottom is unchanged.
 ### Colour themes
 
 Interface › **Theme** lists Dark, Light and System (follows the operating system), the built-in
-themes and any themes you have imported. A choice applies at once. Under the themes, **Viewport** draws the 3D view in the Light or Dark theme's colours whatever the window uses, for example the model on a light view in a dark window (**Follow theme**, the default, keeps the theme's own). The built-in themes are Gruvbox
+themes and any themes you have imported. A choice applies at once. Under the themes, **Viewport** draws the 3D view in the Light or Dark theme's colours whatever the window uses, for example the model on a light view in a dark window (**Follow theme**, the default, keeps the theme's own). **Logo** draws the SolidCraft logo at the top left in shades of the theme's accent instead of the theme's logo colours. The built-in themes are Gruvbox
 (dark and light, each in hard, normal and soft contrast), SolidCraft 95, Platinum 9, Cupertino,
 Green Phosphor, Amber Phosphor, Blueprint, One Dark, Tokyo Night, Solarized Light, Nord, High
 Contrast, Graphite, Nosferatu, Catppuccin Mocha, Okibi and Akari (dark and light, from the
@@ -216,7 +229,10 @@ pills when `on_accent` has less than 4.5:1 contrast with the fill. See the
 
 - **Import…** adds a theme file and turns it on. Importing a file with the same name again updates
   that theme. A file with an unknown colour name or a malformed colour is refused, and the message
-  names every problem.
+  names every problem. A theme shared as text imports the same way without a file: with the
+  Interface page open, press Ctrl+V (Cmd+V on a Mac), or right-click the Import tile and choose
+  **Paste theme**. Pasted text that isn't a theme is left alone. A theme file dropped on the tile
+  imports too.
 - **Export…** saves the theme on now as a complete file listing every colour and radius. It is a good starting
   point for your own theme.
 - **Remove** deletes the selected imported theme.

@@ -154,6 +154,17 @@ fn stage_tools(app: &mut SolveApp, ui: &mut egui::Ui) {
             {
                 app.set_status(error, true);
             }
+            if let Some(command) = solidcraft_engine::find_command("render.settings.set") {
+                let info = crate::render_workspace::interactive_command_info(app, command);
+                let response = ui_kit::compact_icon_label_button(ui, app.tr("render.shots_save"), command.icon, info.enabled);
+                crate::scenario::publish_target("render:stage:save_shot", response.rect);
+                if response.clicked() {
+                    app.start(command.id);
+                }
+                if let Some(reason) = info.disabled_reason {
+                    response.on_disabled_hover_text(reason);
+                }
+            }
         }
         Stage::Output => {
             ui.add_enabled_ui(false, |ui| {
@@ -227,8 +238,7 @@ fn shots_pill(app: &mut SolveApp, ui: &mut egui::Ui, free: Rect) {
         free.left_bottom() + vec2(Tokens::get().space_8, -Tokens::get().space_8),
         egui::Align2::LEFT_BOTTOM,
         |ui| {
-            let response =
-                ui_kit::button(ui, crate::i18n::tr_label("Shots"), ui_kit::Button::Normal).on_hover_text(crate::i18n::tr_label("Show Shots strip"));
+            let response = ui_kit::strip_toggle(ui, false, crate::i18n::tr_label("Shots")).on_hover_text(crate::i18n::tr_label("Show Shots strip"));
             crate::scenario::publish_target("render:shots:show", response.rect);
             if response.clicked() {
                 let _ = app.run("view.shots_strip", serde_json::json!({"visible":true}));
@@ -245,40 +255,8 @@ pub(crate) fn shots_strip(app: &mut SolveApp, ui: &mut egui::Ui) {
         return;
     }
     let available = ui.available_rect_before_wrap();
-    let content = ui_kit::Panel::bottom_strip(ui, "sc_render_shots_strip", available, 48.0, |ui| {
-        ui.horizontal_centered(|ui| {
-            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                let hide = ui_kit::button(ui, crate::i18n::tr_label("Hide"), ui_kit::Button::Normal)
-                    .on_hover_text(crate::i18n::tr_label("Hide Shots strip"));
-                crate::scenario::publish_target("render:shots:hide", hide.rect);
-                if hide.clicked() {
-                    let _ = app.run("view.shots_strip", serde_json::json!({"visible":false}));
-                }
-                let ready = crate::render_workspace::job_ready(app, "render.start");
-                let render = ui_kit::button(ui, app.tr("render.image_start"), ui_kit::Button::Enabled(ready.is_ok()));
-                let render = if let Err(reason) = ready { render.on_disabled_hover_text(reason) } else { render };
-                crate::scenario::publish_target("render:shots:render", render.rect);
-                if render.clicked() {
-                    app.start("render.start");
-                }
-                let names: Vec<_> = app.session.doc.render.setups.keys().cloned().collect();
-                egui::ScrollArea::horizontal()
-                    .id_salt("render_shots_names")
-                    .scroll_bar_visibility(egui::scroll_area::ScrollBarVisibility::AlwaysHidden)
-                    .show(ui, |ui| {
-                        ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
-                            ui_kit::text(ui, crate::i18n::tr_label("Shots"), ui_kit::Text::Inline);
-                            for name in names {
-                                let shot = ui_kit::choice_chip(ui, &name, &name, name == app.render_workspace.view.name);
-                                crate::scenario::publish_target(&format!("render:shots:setup:{name}"), shot.rect);
-                                if shot.clicked() {
-                                    crate::render_workspace::switch_shot(app, name);
-                                }
-                            }
-                        });
-                    });
-            });
-        });
+    let content = ui_kit::Panel::bottom_strip(ui, "sc_render_shots_strip", available, Tokens::get().form_footer_height, |ui| {
+        crate::render_workspace::shots::contents(app, ui);
     });
     let rect = content.map(|c| c.response.rect);
     crate::shell::register_panel(app, "render:shots_strip", rect, Some(Edge::Bottom));

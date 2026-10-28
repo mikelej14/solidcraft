@@ -404,6 +404,100 @@ pub(crate) fn choice_chip(ui: &mut Ui, key: &str, text: &str, selected: bool) ->
     response
 }
 
+/// Thumbnail variant of the shared selection chip. No document or render-job ownership.
+#[derive(Default)]
+pub(crate) struct ThumbnailChoice {
+    pub texture: Option<egui::TextureId>,
+    pub selected: bool,
+    pub modified: bool,
+    pub progress: Option<f32>,
+}
+
+pub(crate) fn thumbnail_choice(ui: &mut Ui, key: &str, text: &str, state: ThumbnailChoice) -> egui::Response {
+    let t = Tokens::get();
+    let thumb_size = vec2(t.control_height + t.space_24, t.control_height + t.space_2);
+    let height = thumb_size.y + t.space_8;
+    let font = crate::fonts::semibold(t.font_small);
+    let width = ui.painter().layout_no_wrap(text.to_owned(), font.clone(), t.form_ink).size().x.min(t.form_label_width * 2.0)
+        + thumb_size.x
+        + t.space_8
+        + t.space_14;
+    let (rect, response) = ui.allocate_exact_size(vec2(width, height), egui::Sense::click());
+    let accent = crate::theme::TabAccent::current(ui.ctx());
+    let ink = if state.selected { accent.ink } else { t.form_ink };
+    ui.painter().rect(
+        rect,
+        t.control_radius,
+        if state.selected {
+            accent.soft
+        } else if response.hovered() {
+            t.hover
+        } else {
+            t.control_fill
+        },
+        egui::Stroke::new(if state.selected { 1.5 } else { 1.0 }, if state.selected { accent.ink } else { t.control_border }),
+        egui::StrokeKind::Inside,
+    );
+    let thumb = egui::Rect::from_min_size(rect.min + vec2(t.space_4, t.space_4), thumb_size);
+    ui.painter().rect_filled(thumb, t.radius_sm, t.dialog_footer);
+    if let Some(texture) = state.texture {
+        egui::Image::new((texture, thumb.size())).corner_radius(t.radius_sm).paint_at(ui, thumb);
+    } else {
+        // Deterministic placeholder while loading, or when a worker is unavailable.
+        ui.painter().hline(thumb.shrink(t.space_8).x_range(), thumb.center().y, t.control_border_stroke(t.control_border));
+    }
+    super::text::paint_text(
+        ui,
+        egui::Rect::from_min_max(egui::pos2(thumb.right() + t.space_8, rect.top()), rect.max - vec2(t.space_10, 0.0)),
+        text,
+        font,
+        ink,
+        false,
+    );
+    if state.modified {
+        let dot = egui::pos2(rect.right() - t.space_6, rect.top() + t.space_6);
+        ui.painter().circle_filled(dot, t.space_3, t.warning);
+        crate::scenario::publish_rect(&format!("dialog:list:{key}:modified"), egui::Rect::from_center_size(dot, vec2(t.space_6, t.space_6)));
+    }
+    if let Some(progress) = state.progress {
+        let center = thumb.center();
+        let radius = t.space_8;
+        ui.painter().circle_filled(center, radius + t.space_3, t.dialog_body);
+        ui.painter().circle_stroke(center, radius, egui::Stroke::new(t.space_2, t.control_border));
+        let fraction = if progress.is_finite() { progress.clamp(0.0, 1.0) } else { 0.0 };
+        let points: Vec<_> = (0..=32)
+            .map(|i| {
+                let angle = -std::f32::consts::FRAC_PI_2 + std::f32::consts::TAU * fraction.max(0.03) * i as f32 / 32.0;
+                center + radius * vec2(angle.cos(), angle.sin())
+            })
+            .collect();
+        ui.painter().add(egui::Shape::line(points, egui::Stroke::new(t.space_2, accent.ink)));
+        crate::scenario::publish_rect(&format!("dialog:list:{key}:progress"), thumb);
+    }
+    response.widget_info(|| egui::WidgetInfo::selected(egui::WidgetType::SelectableLabel, ui.is_enabled(), state.selected, text));
+    crate::scenario::publish_target(&format!("dialog:list:{key}"), response.rect);
+    response.on_hover_text(text)
+}
+
+/// Dashed add variant for thumbnail strips, sharing control tokens and button semantics.
+pub(crate) fn add_choice(ui: &mut Ui, label: &str) -> egui::Response {
+    let t = Tokens::get();
+    let side = t.control_height + t.space_8;
+    let (rect, response) = ui.allocate_exact_size(vec2(side, side), egui::Sense::click());
+    if response.hovered() {
+        ui.painter().rect_filled(rect, t.control_radius, t.hover);
+    }
+    let r = rect.shrink(t.space_2);
+    let mut outline = super::preferences::rounded_perimeter(r, f32::from(t.control_radius));
+    if let Some(first) = outline.first().copied() {
+        outline.push(first);
+    }
+    ui.painter().add(egui::Shape::dashed_line(&outline, egui::Stroke::new(1.0, t.control_border), t.space_3, t.space_3));
+    ui.painter().text(rect.center(), egui::Align2::CENTER_CENTER, "+", egui::FontId::proportional(t.font_subtitle), t.form_dim);
+    response.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, ui.is_enabled(), label));
+    response.on_hover_text(label)
+}
+
 /// A reusable draggable document-colour sample; caller supplies the existing domain payload.
 /// Tokens: control_height/radius, border, accent, hover.
 pub(crate) fn color_swatch<T: Send + Sync + 'static>(

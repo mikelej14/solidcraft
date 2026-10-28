@@ -9,6 +9,7 @@ use crate::i18n;
 /// The commands that have help text. Each one needs a `help.<id>` message in the catalogs.
 pub const DOCUMENTED: &[&str] = &[
     "appearance.assign",
+    "component.finish_edit",
     "face.delete",
     "material.assign",
     "parameters.change",

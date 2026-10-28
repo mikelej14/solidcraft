@@ -414,3 +414,40 @@ fn a_body_pick_goes_on_to_the_point_or_axis() {
     assert_eq!(d.inputs[0].items.len(), 1, "the body is still picked");
     assert!(matches!(d.inputs[1].items.as_slice(), [Sel::Vertex { .. }]), "{:?}", d.inputs[1].items);
 }
+
+/// #8265: input queued while the window is busy arrives together, so one frame can carry the
+/// button let go and the mouse already moving on. The drag must end where the button was
+/// released, not jump the value to where the mouse has since got to.
+#[test]
+fn triad_drag_ends_where_the_button_was_released() {
+    let mut h = crate::scenario::Harness::new();
+    h.app.run("solid.box", json!({"length": 20, "width": 30, "height": 10})).unwrap();
+    h.app.start("solid.move");
+    {
+        let d = h.app.dialog.as_mut().unwrap();
+        d.inputs[0].items = vec![Sel::Body { name: "Body1".into() }];
+    }
+    h.frames(3);
+    let pos = |p: [f64; 2]| egui::pos2(p[0] as f32, p[1] as f32);
+    let button = |p: [f64; 2], pressed: bool| egui::Event::PointerButton {
+        pos: pos(p),
+        button: egui::PointerButton::Primary,
+        pressed,
+        modifiers: Default::default(),
+    };
+    let grip = h.at(&json!({"gizmo": "x"})).unwrap();
+    let released = h.at(&json!({"gizmo": "x", "by": [20.0, 0.0, 0.0]})).unwrap();
+    let later = h.at(&json!({"gizmo": "x", "by": [30.0, 0.0, 0.0]})).unwrap();
+    let value = |h: &crate::scenario::Harness| match &h.app.dialog.as_ref().unwrap().kind {
+        Kind::Move { x, .. } => x.clone(),
+        other => panic!("not a move: {other:?}"),
+    };
+    // Hover the arrow, press it, then drag 20 mm along it.
+    h.frame_with(vec![egui::Event::PointerMoved(pos(grip))]);
+    h.frame_with(vec![button(grip, true)]);
+    h.frame_with(vec![egui::Event::PointerMoved(pos(released))]);
+    assert_eq!(value(&h), "20 mm", "the drag follows the pointer");
+    // The button is let go and the mouse already moves on: one frame carries both.
+    h.frame_with(vec![button(released, false), egui::Event::PointerMoved(pos(later))]);
+    assert_eq!(value(&h), "20 mm", "the drag ends where the button was released");
+}

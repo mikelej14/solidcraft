@@ -2252,6 +2252,17 @@ fn batch_steps_may_name_tools() {
     assert!(body["failed"]["error"].as_str().is_some_and(|e| e.contains("screenshot")), "{body}");
     let (_, body, _) = recorded_batch(Ok(json!({})), json!({"commands": [{"command": "body_topology", "params": {"body": "Body1"}}]}));
     assert!(body["failed"]["error"].as_str().is_some_and(|e| e.contains("model.edges") && e.contains("model.faces")), "{body}");
+    // Editing in place goes to another design's tab: never a step, not even one by one
+    for step in [
+        json!({"command": "component.edit_in_place"}),
+        json!({"command": "Component.Finish_Edit"}),
+        json!({"command": "execute", "params": {"command": "component.finish_edit"}}),
+    ] {
+        let command = step.to_string();
+        let (b, body, is_error) = recorded_batch(Ok(json!({})), json!({"commands": [{"command": "solid.box"}, step]}));
+        assert!(is_error && b.calls.is_empty(), "{command}: {body}");
+        assert!(body["failed"]["error"].as_str().is_some_and(|e| e.contains("on its own")), "{body}");
+    }
 
     // Headless, step by step.
     let mut s = server();

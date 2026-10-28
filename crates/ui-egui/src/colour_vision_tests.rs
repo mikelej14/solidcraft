@@ -295,6 +295,20 @@ fn groups(t: &Tokens) -> Vec<Group> {
         group("axes", &[("axis_x", t.axis_x), ("axis_y", t.axis_y), ("axis_z", t.axis_z)], &[("viewport_top", t.viewport_top)]),
         group("bend lines", &[("bend_up", t.bend_up), ("bend_down", t.bend_down)], &[("viewport_top", t.viewport_top)]),
         group("box select", &[("box_window", t.box_window), ("box_crossing", t.box_crossing)], &[("viewport_top", t.viewport_top)]),
+        // Sketch dimensions (#7861): their lines and values, driving and driven, apart from the
+        // curves they measure, the construction lines and the conflict red (each its own group:
+        // those three are measured against each other elsewhere).
+        group(
+            "sketch dimensions",
+            &[("dimension", t.dimension), ("dimension_driven", t.dimension_driven), ("sketch", t.sketch), ("sketch_fixed", t.sketch_fixed)],
+            &[("viewport_top", t.viewport_top), ("viewport_bottom", t.viewport_bottom)],
+        ),
+        group(
+            "dimensions and construction",
+            &[("dimension", t.dimension), ("dimension_driven", t.dimension_driven), ("sketch_construction", t.sketch_construction)],
+            &[],
+        ),
+        group("dimensions and conflicts", &[("dimension", t.dimension), ("dimension_driven", t.dimension_driven), ("error", t.error)], &[]),
         group(
             "selection",
             &[
@@ -529,8 +543,6 @@ const NO_MEANING: &[(&str, &str)] = &[
     ("grid", "the grid"),
     ("grid_major", "the grid"),
     ("profile_fill", "a closed profile's tint"),
-    ("dimension", "dimension text"),
-    ("dimension_driven", "dimension text, dimmed"),
     ("glyph_bg", "a constraint glyph's ground"),
     ("glyph_edge", "a constraint glyph's edge"),
     // The navigation cube: labelled faces.
@@ -859,6 +871,51 @@ fn validation_badges_are_distinct_and_readable_in_every_mode() {
             if contrast < 4.5 {
                 failures.push(format!("{mode:?} dark={dark} success contrast: {contrast:.2}"));
             }
+        }
+    }
+    assert!(failures.is_empty(), "{}", failures.join("\n"));
+}
+
+/// Every shipped theme draws sketch dimensions in a colour of their own (#7861): apart from the
+/// sketch curves, construction lines, the conflict red and the hover and selection accent, and
+/// readable on the viewport — a driving value as text, a driven one as a dimmed line. The
+/// two-colour themes (1-bit) tell them apart by shape alone.
+#[test]
+fn shipped_themes_draw_dimensions_in_their_own_readable_colour() {
+    use crate::theme::contrast_ratio;
+    use crate::theme_files::{builtin, is_two_colour, resolve};
+    let themes = [("light", Tokens::light()), ("dark", Tokens::dark())]
+        .into_iter()
+        .map(|(id, t)| (id.to_string(), t))
+        .chain(builtin().iter().filter(|f| !is_two_colour(&f.id)).map(|f| (f.id.clone(), resolve(f))));
+    let mut failures = Vec::new();
+    for (id, t) in themes {
+        for (name, dim, min_contrast) in [("dimension", t.dimension, 4.5), ("dimension_driven", t.dimension_driven, 3.0)] {
+            for (ground, g) in [("viewport_top", t.viewport_top), ("viewport_bottom", t.viewport_bottom)] {
+                let c = contrast_ratio(dim, g);
+                if c < min_contrast {
+                    failures.push(format!("{id}: {name} on {ground}: contrast {c:.2}"));
+                }
+            }
+            let others = [
+                ("sketch", t.sketch),
+                ("sketch_fixed", t.sketch_fixed),
+                ("sketch_locked", t.sketch_locked),
+                ("sketch_projected", t.sketch_projected),
+                ("sketch_construction", t.sketch_construction),
+                ("error", t.error),
+                ("accent", t.accent),
+            ];
+            for (other, o) in others {
+                let d = normal(rgb(dim), rgb(o));
+                if d < FLOOR {
+                    failures.push(format!("{id}: {name} vs {other}: {d:.1}"));
+                }
+            }
+        }
+        let d = normal(rgb(t.dimension), rgb(t.dimension_driven));
+        if d < FLOOR {
+            failures.push(format!("{id}: dimension vs dimension_driven: {d:.1}"));
         }
     }
     assert!(failures.is_empty(), "{}", failures.join("\n"));
