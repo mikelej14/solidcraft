@@ -28,10 +28,12 @@
 | **GGUF chat-format selection** | Run llama.cpp with Jinja tool-call handling, selecting the model's embedded template instead of guessing a Qwen, Granite, or Ministral template from the filename. |
 | **CAD tool compatibility check** | Before connecting the assistant, send a harmless structured function-call probe. Models that cannot produce valid OpenAI `tool_calls` are rejected with a visible error instead of silently claiming CAD capability. |
 | **Bundled Windows runtime** | Windows x64 MSI and portable ZIP include a checksum-pinned Vulkan `llama.cpp` archive; no separately configured Ollama or LM Studio server is required for this option. |
-| **GPU / CPU fallback** | Attempts Vulkan GPU offload first, then retries with CPU layers if startup fails. |
+| **GPU-only inference** | Loads all available model layers to Vulkan without silently retrying the entire model on CPU; a model that does not fit reports a clear error. |
 | **Existing assistant integration** | The local model uses SolidCraft's OpenAI-compatible assistant backend and existing CAD tools, approval controls and undo path. |
 | **Keep your other providers** | Saved external endpoints, credentials and custom URLs are not overwritten by selecting a local GGUF. |
 | **Local network scope** | The managed model server binds to `127.0.0.1` (your computer only). |
+
+**Memory policy:** This fork uses GPU-only model loading (`--gpu-layers all`), disables automatic fitting onto CPU (`--fit off`), bypasses host staging where supported (`--no-host`), and disables model-file mapping (`--load-mode none`). Models that cannot fit should fail instead of silently switching to CPU. On AMD integrated GPUs, *GPU memory and system RAM are shared physical memory* and Windows may report allocations in both categories. Disabling mapping may increase load time and does not guarantee lower peak memory in every case.
 
 This is **local model hosting**, not a new CAD application, a separate AI UI or
 a wholesale rewrite of SolidCraft's modeling engine.
@@ -56,6 +58,8 @@ not whether it will choose every CAD operation or dimension correctly. Not all
 GGUF conversions carry suitable tool-use chat templates, and some models may fail
 the check even if they can answer ordinary chat questions. The check runs after
 model loading, on a worker thread, and does not change external providers.
+
+**The GPU-only memory fix is source-committed but has not yet passed a fresh Windows MSI build or a Radeon 680M memory-profile test.**
 
 **Not yet verified on a real user's Windows system:** clean installation,
 actual GGUF model load, AI-assisted CAD tool execution, unload/reload,
