@@ -88,6 +88,8 @@ pub struct LocalState {
     /// Only expose this provider to the chat after llama.cpp reports model readiness.
     pub ready: bool,
     pub(super) waiting: Option<std::sync::mpsc::Receiver<Result<(), String>>>,
+    /// Unpacks the signed and checksum-pinned runtime without freezing CAD.
+    pub(super) preparing: Option<std::sync::mpsc::Receiver<Result<std::path::PathBuf, String>>>,
     cpu_retried: bool,
     pub status: String,
     pub error: Option<String>,
@@ -98,16 +100,43 @@ pub struct LocalState {
 #[cfg(not(target_arch = "wasm32"))]
 fn start_local(app: &mut SolveApp, ctx: &egui::Context, cpu_only: bool) {
     let local = &mut app.agent_chat.settings.local;
-    let Some(model) = local.selected.clone() else {
+    let Some(model) = local.selected.as_ref() else {
         local.error = Some("Choose a GGUF model first".into());
         return;
     };
-    let Some(server) = super::local_gguf::bundled_server() else {
-        local.error = Some("Cannot locate the SolidCraft executable".into());
+    if !model.is_file() || !model.extension().is_some_and(|e| e.eq_ignore_ascii_case("gguf")) {
+        local.error = Some("Choose an existing .gguf model file".into());
         return;
-    };
+    }
+    let (sender, receiver) = std::sync::mpsc::channel();
+    let wake = ctx.clone();
+    match std::thread::Builder::new()
+        .name("solidcraft-gguf-prepare".into())
+        .spawn(move || {
+            let result = super::local_gguf::prepare_runtime();
+            let _ = sender.send(result);
+            wake.request_repaint();
+        })
+    {
+        Ok(_) => {
+            local.preparing = Some(receiver);
+            local.cpu_retried = cpu_only;
+            local.status = "Preparing built-in GGUF runtime…".into();
+            local.error = None;
+            ctx.request_repaint_after(std::time::Duration::from_millis(200));
+        }
+        Err(error) => local.error = Some(format!("Cannot prepare model runtime: {error}")),
+    }
+}
+
+/// Start the verified local runtime after the archive is available on disk.
+#[cfg(not(target_arch = "wasm32"))]
+fn launch_local(app: &mut SolveApp, ctx: &egui::Context, server: &std::path::Path) {
+    let local = &mut app.agent_chat.settings.local;
+    let Some(model) = local.selected.clone() else { return };
+    let cpu_only = local.cpu_retried;
     let layers = if cpu_only { 0 } else { 99 };
-    match local.runtime.load(&model, &server, layers) {
+    match local.runtime.load(&model, server, layers) {
         Err(error) => {
             local.error = Some(error);
             local.status.clear();
@@ -115,28 +144,30 @@ fn start_local(app: &mut SolveApp, ctx: &egui::Context, cpu_only: bool) {
         Ok((endpoint, _)) => {
             let (sender, receiver) = std::sync::mpsc::channel();
             let wake = ctx.clone();
-            let result = std::thread::Builder::new()
+            match std::thread::Builder::new()
                 .name("solidcraft-gguf-health".into())
                 .spawn(move || {
                     let result = super::local_gguf::Runtime::wait_ready(&endpoint, std::time::Duration::from_secs(180));
                     let _ = sender.send(result);
                     wake.request_repaint();
-                });
-            if let Err(error) = result {
-                local.runtime.unload();
-                local.error = Some(format!("Cannot start model readiness worker: {error}"));
-                return;
+                })
+            {
+                Ok(_) => {
+                    local.waiting = Some(receiver);
+                    local.ready = false;
+                    local.error = None;
+                    local.status = if cpu_only {
+                        "Loading GGUF using CPU fallback…".into()
+                    } else {
+                        "Loading GGUF using Vulkan (CPU fallback available)…".into()
+                    };
+                    ctx.request_repaint_after(std::time::Duration::from_millis(200));
+                }
+                Err(error) => {
+                    local.runtime.unload();
+                    local.error = Some(format!("Cannot start model readiness worker: {error}"));
+                }
             }
-            local.waiting = Some(receiver);
-            local.ready = false;
-            local.cpu_retried = cpu_only;
-            local.error = None;
-            local.status = if cpu_only {
-                "Loading GGUF using CPU fallback…".into()
-            } else {
-                "Loading GGUF using Vulkan (CPU fallback available)…".into()
-            };
-            ctx.request_repaint_after(std::time::Duration::from_millis(200));
         }
     }
 }
@@ -145,6 +176,27 @@ fn start_local(app: &mut SolveApp, ctx: &egui::Context, cpu_only: bool) {
 /// retry once using CPU-only inference, then report the actual log path.
 #[cfg(not(target_arch = "wasm32"))]
 pub(super) fn poll_local(app: &mut SolveApp, ctx: &egui::Context) {
+    if app.agent_chat.settings.local.preparing.is_some() {
+        let answer = app.agent_chat.settings.local.preparing.as_ref().and_then(|rx| match rx.try_recv() {
+            Ok(value) => Some(value),
+            Err(std::sync::mpsc::TryRecvError::Disconnected) => Some(Err("Runtime preparation worker ended".into())),
+            Err(std::sync::mpsc::TryRecvError::Empty) => None,
+        });
+        if let Some(answer) = answer {
+            app.agent_chat.settings.local.preparing = None;
+            match answer {
+                Ok(server) => launch_local(app, ctx, &server),
+                Err(error) => {
+                    let local = &mut app.agent_chat.settings.local;
+                    local.error = Some(error);
+                    local.status.clear();
+                }
+            }
+        } else {
+            ctx.request_repaint_after(std::time::Duration::from_millis(200));
+        }
+        return;
+    }
     let local = &mut app.agent_chat.settings.local;
     let pending = local.waiting.is_some();
     let was_ready = local.ready;
@@ -212,6 +264,7 @@ fn unload_local(app: &mut SolveApp) {
     }
     let local = &mut app.agent_chat.settings.local;
     local.waiting = None;
+    local.preparing = None;
     local.ready = false;
     local.runtime.unload();
     local.error = None;
@@ -543,7 +596,7 @@ fn pointer_section(app: &mut SolveApp, ui: &mut egui::Ui) {
 #[cfg(not(target_arch = "wasm32"))]
 fn local_gguf_section(app: &mut SolveApp, ui: &mut egui::Ui) {
     let local = &app.agent_chat.settings.local;
-    let pending = local.waiting.is_some();
+    let pending = local.waiting.is_some() || local.preparing.is_some();
     let running = local.runtime.endpoint.is_some();
     let can_load = local.selected.is_some() && !running && !pending;
     let can_open = !pending && !app.file_picker_busy();
