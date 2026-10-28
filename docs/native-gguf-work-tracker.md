@@ -1,6 +1,6 @@
-# Native GGUF integration — clean baseline
+# Native GGUF integration — active Windows fork
 
-This branch was created directly from SolidCraft's `main` branch. No files from the previous `solidcraft-agent-development` experiment were copied into it.
+This work began on a clean branch created from SolidCraft's `main` branch. It is now maintained on the repository's default `solidcraft-native-gguf-load` branch. No files from the earlier `solidcraft-agent-development` experiment were copied into the native implementation.
 
 ## Scope
 
@@ -38,10 +38,10 @@ These entries distinguish **committed code** from **validated behavior**.
 - [x] Initial Vulkan loading with CPU-only retry on failure
 - [x] SHA-verified llama.cpp Vulkan runtime archive added to Windows x64/ARM64 MSI and portable package *scripts*
 - [x] Runtime extraction happens off the UI thread when a model is loaded
-- [ ] Windows Rust compile and UI test suite completed successfully
-- [ ] Windows packaging script run successfully for x64 and verified MSI/portable payloads
+- [x] Windows Rust type-check and GGUF-specific unit tests passed in [CI run 40749531287](https://github.com/mikelej14/solidcraft/actions/runs/40749531287); this is not a claim that the complete UI test suite passed
+- [x] Windows x64 WiX MSI and portable ZIP built, with automated payload checks, in [CI run 40749531287](https://github.com/mikelej14/solidcraft/actions/runs/40749531287)
 - [ ] Actual GGUF model tested through Load → chat → SolidCraft CAD tool call → Unload
 - [ ] Vision/mmproj model support validated and capability gating tested
 - [ ] Clean install/uninstall and external URL switching regression tested
 
-This branch is **not yet a validated installer or release**. Do not merge until the compile and on-device acceptance tests pass. The existing custom URL configuration has not been replaced.
+The **Windows x64 MSI and portable artifacts have been built by CI** but a clean install and actual on-device GGUF CAD-tool session remain **unverified**. Do not claim an end-to-end validated release until hardware acceptance tests pass. The existing custom URL configuration has not been replaced.
