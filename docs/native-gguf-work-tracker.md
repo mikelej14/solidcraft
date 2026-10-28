@@ -25,18 +25,23 @@ Add a local GGUF option to the **existing assistant**:
 
 Do not add a second CAD editor, Python desktop application or parallel agent tool protocol.
 
-## Work tracking
+## Implementation status
 
-- [x] Clean baseline branch created from `main`
-- [x] Existing assistant integration points identified
-- [ ] Windows GGUF file dialog
-- [ ] Local inference process management and startup readiness
-- [ ] Load/Unload buttons and state
-- [ ] Automatic connection through existing API backend
-- [ ] External URL regression tests
-- [ ] Vulkan and CPU fallback
-- [ ] Model capabilities and vision
-- [ ] Windows packaging
-- [ ] Build, unit tests, real-model smoke tests and clean-install validation
+These entries distinguish **committed code** from **validated behavior**.
 
-**No installer is ready.** Check boxes only after implementation and appropriate verification.
+- [x] Clean development branch created from main (no Python prototype)
+- [x] Native file picker connected to **Open GGUF…** in the existing AI settings
+- [x] **Load** and **Unload** controls and UI status/error text
+- [x] Owned localhost llama-server process, health-based readiness and process shutdown
+- [x] Temporary OpenAI-compatible provider routed through the existing agent tool/permission/undo system
+- [x] Unit test: saved external URL configurations survive local provider selection
+- [x] Initial Vulkan loading with CPU-only retry on failure
+- [x] SHA-verified llama.cpp Vulkan runtime archive added to Windows x64/ARM64 MSI and portable package *scripts*
+- [x] Runtime extraction happens off the UI thread when a model is loaded
+- [ ] Windows Rust compile and UI test suite completed successfully
+- [ ] Windows packaging script run successfully for x64 and verified MSI/portable payloads
+- [ ] Actual GGUF model tested through Load → chat → SolidCraft CAD tool call → Unload
+- [ ] Vision/mmproj model support validated and capability gating tested
+- [ ] Clean install/uninstall and external URL switching regression tested
+
+This branch is **not yet a validated installer or release**. Do not merge until the compile and on-device acceptance tests pass. The existing custom URL configuration has not been replaced.
