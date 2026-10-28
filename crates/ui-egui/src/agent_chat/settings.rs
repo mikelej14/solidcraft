@@ -699,14 +699,18 @@ fn agents_section(app: &mut SolveApp, ui: &mut egui::Ui) {
                 }
                 ui_kit::settings_block(ui, &entry.name, t.space_24 * 6.0 + t.space_6, |ui| {
                     ui.horizontal_wrapped(|ui| {
+                        let transient = entry.id == super::local_gguf::AGENT_ID;
                         let is_default = default.as_deref() == Some(entry.id.as_str());
-                        let choice = ui_kit::button(
-                            ui,
-                            tr(if is_default { "ui.ai_default" } else { "ai.prefs.make_default" }),
-                            if is_default { ui_kit::Button::SmallSelected } else { ui_kit::Button::Small },
-                        );
+                        let style = if transient {
+                            ui_kit::Button::Enabled(false)
+                        } else if is_default {
+                            ui_kit::Button::SmallSelected
+                        } else {
+                            ui_kit::Button::Small
+                        };
+                        let choice = ui_kit::button(ui, tr(if is_default { "ui.ai_default" } else { "ai.prefs.make_default" }), style);
                         crate::scenario::publish_target(&format!("dialog:list:{}", entry.id), choice.rect);
-                        if choice.clicked() {
+                        if choice.clicked() && !transient {
                             app.preferences.agent_default = entry.id.clone();
                         }
                         let test_button = ui_kit::button(ui, tr("ui.ai_test"), ui_kit::Button::Small);
