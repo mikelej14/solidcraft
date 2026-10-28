@@ -51,7 +51,11 @@ impl Runtime {
             .map_err(|e| format!("Cannot open model log: {e}"))?;
         let err_log = log.try_clone().map_err(|e| e.to_string())?;
         let child = Command::new(executable)
-            .args(["--host", "127.0.0.1", "--port", &port.to_string(), "--ctx-size", "8192", "--gpu-layers", &gpu_layers.to_string()])
+            // Let llama.cpp select the model's embedded chat template. Jinja is
+            // required for OpenAI-compatible structured tool calls (Qwen,
+            // Granite, Ministral, and other supported GGUF families).
+            // Never guess or impose a ChatML template from the filename.
+            .args(["--host", "127.0.0.1", "--port", &port.to_string(), "--ctx-size", "8192", "--gpu-layers", &gpu_layers.to_string(), "--jinja"])
             .arg("--model").arg(model)
             .arg("--alias").arg(&name)
             .stdin(Stdio::null())
@@ -105,6 +109,110 @@ impl Runtime {
 
 impl Drop for Runtime {
     fn drop(&mut self) { self.unload(); }
+}
+
+/// Check that the loaded GGUF and its automatically selected Jinja template
+/// actually produce a structured OpenAI tool call. This never calls a real
+/// SolidCraft command; it only exercises llama-server's model/tool protocol.
+/// Call from a worker AFTER /health reports ready, not from the UI thread.
+///
+/// A model that only replies in prose is not silently marked as a CAD agent.
+pub fn verify_tool_calling(
+    http: &super::backend::HttpFn,
+    endpoint: &str,
+    model: &str,
+) -> Result<String, String> {
+    // Only ever send a diagnostic to a managed loopback endpoint. The URL is
+    // reconstructed, not taken verbatim from an external provider config.
+    let port = endpoint
+        .strip_prefix("http://127.0.0.1:")
+        .and_then(|s| s.strip_suffix("/v1"))
+        .and_then(|s| s.parse::<u16>().ok())
+        .filter(|p| *p != 0)
+        .ok_or("Not a managed local GGUF endpoint")?;
+    let base = format!("http://127.0.0.1:{port}");
+    let mut template_source = "GGUF template (automatic)";
+
+    // /props is informational. Some llama.cpp revisions omit template fields;
+    // the actual structured call below is the authoritative compatibility test.
+    let props = super::backend::HttpRequest {
+        method: "GET",
+        url: format!("{base}/props"),
+        headers: vec![],
+        body: None,
+        timeout_s: 10,
+    };
+    if let Ok((200, bytes)) = http(&props)
+        && let Ok(properties) = serde_json::from_slice::<serde_json::Value>(&bytes)
+    {
+        if properties.get("chat_template_tool_use").and_then(serde_json::Value::as_str).is_some_and(|s| !s.is_empty()) {
+            template_source = "embedded tool-use template";
+        } else if properties.get("chat_template").and_then(serde_json::Value::as_str).is_some_and(|s| !s.is_empty()) {
+            template_source = "embedded chat template";
+        }
+    }
+
+    // Use the same /v1/chat/completions tool_calls format as SolidCraft's
+    // existing CAD tool loop. The test function is never registered with CAD.
+    let body = serde_json::json!({
+        "model": model,
+        "messages": [
+            {"role": "system", "content": "You are validating tool calling. Call the supplied function once with ok=true. No normal text."},
+            {"role": "user", "content": "Call solidcraft_compatibility_check with ok set to true."}
+        ],
+        "tools": [{
+            "type": "function",
+            "function": {
+                "name": "solidcraft_compatibility_check",
+                "description": "A harmless protocol diagnostic. Return ok=true.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {"ok": {"type": "boolean"}},
+                    "required": ["ok"]
+                }
+            }
+        }],
+        "tool_choice": {"type": "function", "function": {"name": "solidcraft_compatibility_check"}},
+        "temperature": 0,
+        "max_tokens": 192,
+        "stream": false,
+        "parallel_tool_calls": false
+    });
+    let request = super::backend::HttpRequest {
+        method: "POST",
+        url: format!("{base}/v1/chat/completions"),
+        headers: vec![("Content-Type".into(), "application/json".into())],
+        body: Some(body.to_string().into_bytes()),
+        timeout_s: 120,
+    };
+    let (status, response) = http(&request).map_err(|e| format!("Model tool-call check failed: {e}"))?;
+    let answer: serde_json::Value = serde_json::from_slice(&response)
+        .map_err(|e| format!("Model returned an invalid tool-call response: {e}"))?;
+    if status != 200 {
+        let detail = answer.pointer("/error/message")
+            .and_then(serde_json::Value::as_str)
+            .unwrap_or("model/server rejected the structured tool request");
+        return Err(format!("Model tool-call check HTTP {status}: {detail}"));
+    }
+    let calls = answer.pointer("/choices/0/message/tool_calls")
+        .and_then(serde_json::Value::as_array)
+        .ok_or("This GGUF replied without structured tool_calls. Its chat template or tool support is incompatible with SolidCraft CAD commands.")?;
+    let passed = calls.iter().any(|call| {
+        if call.pointer("/function/name").and_then(serde_json::Value::as_str) != Some("solidcraft_compatibility_check") {
+            return false;
+        }
+        let args = call.pointer("/function/arguments");
+        let parsed = match args {
+            Some(serde_json::Value::String(s)) => serde_json::from_str::<serde_json::Value>(s).ok(),
+            Some(serde_json::Value::Object(_)) => args.cloned(),
+            _ => None,
+        };
+        parsed.as_ref().and_then(|v| v.get("ok")).and_then(serde_json::Value::as_bool) == Some(true)
+    });
+    if !passed {
+        return Err("This GGUF did not produce a valid structured tool call for the CAD assistant. Try an instruct/tool-use GGUF with its original embedded chat template.".into());
+    }
+    Ok(format!("{template_source}; structured tool calls verified"))
 }
 
 /// Find or unpack the checksum-pinned Vulkan runtime shipped with the Windows
@@ -211,6 +319,41 @@ mod tests {
     #[test]
     fn invalid_managed_endpoint_is_rejected() {
         assert!(Runtime::wait_ready("http://example.com/v1", Duration::ZERO).is_err());
+    }
+
+    #[test]
+    fn model_probe_uses_local_endpoint_and_accepts_structured_tool_calls() {
+        use std::sync::{Arc, Mutex};
+        let requests = Arc::new(Mutex::new(Vec::<super::super::backend::HttpRequest>::new()));
+        let record = requests.clone();
+        let http: super::super::backend::HttpFn = Arc::new(move |r| {
+            record.lock().unwrap().push(r.clone());
+            if r.method == "GET" {
+                Ok((200, br#"{"chat_template_tool_use":"{{ tools }}"}"#.to_vec()))
+            } else {
+                Ok((200, br#"{"choices":[{"message":{"tool_calls":[{"type":"function","function":{"name":"solidcraft_compatibility_check","arguments":"{\"ok\":true}"}}]}}]}"#.to_vec()))
+            }
+        });
+        let report = verify_tool_calling(&http, "http://127.0.0.1:23232/v1", "test-3b.gguf").unwrap();
+        assert!(report.contains("tool calls verified"), "{report}");
+        let sent = requests.lock().unwrap();
+        assert_eq!(sent.len(), 2);
+        assert_eq!(sent[0].url, "http://127.0.0.1:23232/props");
+        assert_eq!(sent[1].url, "http://127.0.0.1:23232/v1/chat/completions");
+        let body: serde_json::Value = serde_json::from_slice(sent[1].body.as_deref().unwrap()).unwrap();
+        assert_eq!(body["model"], "test-3b.gguf");
+        assert_eq!(body["tools"][0]["function"]["name"], "solidcraft_compatibility_check");
+    }
+
+    #[test]
+    fn model_probe_rejects_chat_only_and_non_loopback_endpoints() {
+        use std::sync::Arc;
+        let http: super::super::backend::HttpFn = Arc::new(|r| {
+            if r.method == "GET" { return Ok((404, b"{}".to_vec())); }
+            Ok((200, br#"{"choices":[{"message":{"content":"I can do that."}}]}"#.to_vec()))
+        });
+        assert!(verify_tool_calling(&http, "http://127.0.0.1:23567/v1", "chat-only.gguf").is_err());
+        assert!(verify_tool_calling(&http, "http://example.com/v1", "model.gguf").is_err());
     }
 
     #[test]
