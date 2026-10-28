@@ -12,6 +12,11 @@ use std::time::{Duration, Instant};
 /// The ID of the temporary provider; it is never saved to user preferences.
 pub const AGENT_ID: &str = "solidcraft-native-local-gguf";
 
+/// Default context window for local CAD operations (tokens).
+pub const DEFAULT_CONTEXT_SIZE: u32 = 32_768;
+pub const MIN_CONTEXT_SIZE: u32 = 4_096;
+pub const MAX_CONTEXT_SIZE: u32 = 131_072;
+
 // Exclusive GPU inference settings. Keep them in one place so a regression
 // cannot silently reactivate CPU fallback or model-file memory mapping.
 // AMD integrated GPUs still share real physical system RAM with the CPU.
@@ -43,7 +48,10 @@ impl Runtime {
     }
 
     /// Launches promptly; use wait_ready on a worker before connecting the chat.
-    pub fn load(&mut self, model: &Path, executable: &Path) -> Result<(String, String), String> {
+    pub fn load(&mut self, model: &Path, executable: &Path, context_size: u32) -> Result<(String, String), String> {
+        if !(MIN_CONTEXT_SIZE..=MAX_CONTEXT_SIZE).contains(&context_size) {
+            return Err(format!("GGUF context size must be between {MIN_CONTEXT_SIZE} and {MAX_CONTEXT_SIZE} tokens"));
+        }
         if self.running() {
             return Err("Unload the current GGUF model first".into());
         }
@@ -71,7 +79,7 @@ impl Runtime {
             // No hidden CPU copy or fallback: the model must fit on the GPU.
             // The GGUF file is not memory-mapped, and Vulkan offload avoids
             // an additional host staging buffer where supported.
-            .args(["--host", "127.0.0.1", "--port", &port.to_string(), "--ctx-size", "8192"])
+            .args(["--host", "127.0.0.1", "--port", &port.to_string(), "--ctx-size", &context_size.to_string()])
             .args(gpu_only_flags())
             .arg("--model").arg(model)
             .arg("--alias").arg(&name)
@@ -342,7 +350,7 @@ mod tests {
     #[test]
     fn missing_executable_does_not_create_server() {
         let mut runtime = Runtime::default();
-        assert!(runtime.load(Path::new("missing-model.gguf"), Path::new("missing-runtime")).is_err());
+        assert!(runtime.load(Path::new("missing-model.gguf"), Path::new("missing-runtime"), DEFAULT_CONTEXT_SIZE).is_err());
         assert!(!runtime.running());
     }
 
@@ -352,7 +360,7 @@ mod tests {
         // Simulate a connected runtime whose child is still owned. A model
         // switch must unload the previous child before launching another.
         // A missing model cannot accidentally spawn a duplicate server.
-        assert!(runtime.load(Path::new("nonexistent.gguf"), Path::new("llama-server.exe")).is_err());
+        assert!(runtime.load(Path::new("nonexistent.gguf"), Path::new("llama-server.exe"), DEFAULT_CONTEXT_SIZE).is_err());
         assert!(!runtime.running());
     }
 
