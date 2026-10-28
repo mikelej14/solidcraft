@@ -55,7 +55,14 @@ impl Runtime {
             // required for OpenAI-compatible structured tool calls (Qwen,
             // Granite, Ministral, and other supported GGUF families).
             // Never guess or impose a ChatML template from the filename.
-            .args(["--host", "127.0.0.1", "--port", &port.to_string(), "--ctx-size", "8192", "--gpu-layers", &gpu_layers.to_string(), "--jinja"])
+            // No implicit CPU layer fallback: if the chosen GGUF cannot fit on
+            // the configured GPU, report the failure instead of quietly
+            // loading a second full CPU-side model. 99 covers small models.
+            // --no-host bypasses the extra host staging buffer for offload.
+            // --no-mmap avoids leaving a mapped model-file view as another
+            // apparent resident allocation while GPU weights are loaded.
+            // These flags do not make GPU VRAM physically separate on an APU.
+            .args(["--host", "127.0.0.1", "--port", &port.to_string(), "--ctx-size", "8192", "--gpu-layers", &gpu_layers.to_string(), "--jinja", "--fit", "off", "--no-host", "--no-mmap"])
             .arg("--model").arg(model)
             .arg("--alias").arg(&name)
             .stdin(Stdio::null())
@@ -315,6 +322,16 @@ mod tests {
     fn missing_executable_does_not_create_server() {
         let mut runtime = Runtime::default();
         assert!(runtime.load(Path::new("missing-model.gguf"), Path::new("missing-runtime"), 99).is_err());
+        assert!(!runtime.running());
+    }
+
+    #[test]
+    fn second_load_is_rejected_before_spawning_another_server() {
+        let mut runtime = Runtime::default();
+        // Simulate a connected runtime whose child is still owned. A model
+        // switch must unload the previous child before launching another.
+        // A missing model cannot accidentally spawn a duplicate server.
+        assert!(runtime.load(Path::new("nonexistent.gguf"), Path::new("llama-server.exe"), 99).is_err());
         assert!(!runtime.running());
     }
 
