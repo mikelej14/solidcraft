@@ -133,6 +133,14 @@
       <Component Id="SolidcraftCliAlias">
         <File Id="SolvecraftCliAliasExe" Source="$(var.BinDir)\solvecraft-cli.exe" KeyPath="yes" />
       </Component>
+      <!-- Runtime is extracted on demand to the user's app-data folder. The
+           verified archive remains side by side with SolidCraft; x86 has no
+           upstream llama.cpp binary and keeps its original installer. -->
+      <?if $(var.GgufBundle) = yes ?>
+      <Component Id="SolidcraftLocalGgufArchive">
+        <File Id="LocalGgufArchive" Source="$(var.BinDir)\local-gguf.zip" KeyPath="yes" />
+      </Component>
+      <?endif?>
       <!-- Several unversioned files: an explicit GUID (WIX0367). -->
       <Component Id="SolidcraftLicences" Guid="CDEDEE8D-4BE9-4872-A2EA-EE623A6C7E91">
         <File Id="LicenseMit" Source="$(var.BinDir)\LICENSE-MIT" KeyPath="yes" />
