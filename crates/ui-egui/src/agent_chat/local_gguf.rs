@@ -165,7 +165,7 @@ pub fn prepare_runtime() -> Result<PathBuf, String> {
                 if item.is_dir() { continue; }
                 // Strip all upstream ZIP paths: no archive entry may choose a
                 // destination outside our private runtime folder.
-                let filename = item.name().replace('\\', "/");
+                let filename = item.name().map_err(|e| format!("Invalid GGUF runtime archive filename: {e}"))?.replace('\\', "/");
                 let filename = filename.rsplit('/').next().unwrap_or("");
                 let lower = filename.to_ascii_lowercase();
                 if !(lower == "llama-server.exe" || lower.ends_with(".dll")) { continue; }
