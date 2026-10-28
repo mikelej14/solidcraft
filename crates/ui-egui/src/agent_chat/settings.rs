@@ -419,6 +419,7 @@ pub fn page(app: &mut SolveApp, ui: &mut egui::Ui) {
             if browsing && app.agent_chat.detection.is_none() && app.agent_chat.detecting.is_none() {
                 refresh(app, &ui.ctx().clone());
             }
+            local_gguf_section(app, ui);
             agents_section(app, ui);
         }
         permissions_section(app, ui);
@@ -536,6 +537,69 @@ fn pointer_section(app: &mut SolveApp, ui: &mut egui::Ui) {
             |ui, (visible, speed, follow)| ui_kit::settings_pointer_preview(ui, visible, crate::i18n::tr_label(&speed), follow),
         );
     });
+}
+
+/// Small addition to the existing AI settings; all external endpoint controls remain.
+#[cfg(not(target_arch = "wasm32"))]
+fn local_gguf_section(app: &mut SolveApp, ui: &mut egui::Ui) {
+    let local = &app.agent_chat.settings.local;
+    let pending = local.waiting.is_some();
+    let running = local.runtime.endpoint.is_some();
+    let can_load = local.selected.is_some() && !running && !pending;
+    let can_open = !pending && !app.file_picker_busy();
+    let selected = local.selected.as_ref().map(|p| p.display().to_string())
+        .unwrap_or_else(|| "No GGUF selected".into());
+    let active = local.runtime.model_path.as_ref().filter(|_| running)
+        .map(|p| format!("Loaded file: {}", p.display()));
+    let status = local.status.clone();
+    let error = local.error.clone();
+
+    let mut open = false;
+    let mut load = false;
+    let mut unload = false;
+    ui_kit::settings_section(ui, "local_gguf", "Local GGUF", |ui| {
+        ui_kit::text(ui, "Use a GGUF file directly in SolidCraft's existing assistant. Custom URLs and external providers remain available.", ui_kit::Text::Note("local_gguf_intro"));
+        ui_kit::settings_short_note(ui, &selected);
+        if let Some(active) = &active {
+            ui_kit::settings_short_note(ui, active);
+        }
+        ui.horizontal_wrapped(|ui| {
+            let b = ui_kit::button(ui, "Open GGUF…", ui_kit::Button::Enabled(can_open));
+            crate::scenario::publish_handle("prefs:gguf:open", b.rect.center());
+            open = b.clicked();
+            let b = ui_kit::button(ui, "Load", ui_kit::Button::Enabled(can_load));
+            crate::scenario::publish_handle("prefs:gguf:load", b.rect.center());
+            load = b.clicked();
+            let b = ui_kit::button(ui, "Unload", ui_kit::Button::Enabled(running || pending));
+            crate::scenario::publish_handle("prefs:gguf:unload", b.rect.center());
+            unload = b.clicked();
+        });
+        if !status.is_empty() {
+            ui_kit::settings_short_note(ui, &status);
+        }
+        if let Some(error) = &error {
+            ui_kit::text(ui, error, ui_kit::Text::Report("local_gguf_error", true));
+        }
+    });
+    if open {
+        app.pick_file("GGUF model", &["gguf"], |app, path| {
+            if let Some(path) = path {
+                let file = std::path::PathBuf::from(path);
+                let local = &mut app.agent_chat.settings.local;
+                if file.is_file() && file.extension().is_some_and(|e| e.eq_ignore_ascii_case("gguf")) {
+                    local.selected = Some(file);
+                    local.error = None;
+                } else {
+                    local.error = Some("Choose an existing .gguf file".into());
+                }
+            }
+        });
+    }
+    if unload {
+        unload_local(app);
+    } else if load {
+        start_local(app, ui.ctx(), false);
+    }
 }
 
 /// The agents: found and added, with Test, Default, a permission override and Remove.
