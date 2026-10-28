@@ -255,7 +255,7 @@ pub(super) fn poll_local(app: &mut SolveApp, ctx: &egui::Context) {
 
 /// Explicit unload leaves saved custom URLs and cloud providers untouched.
 #[cfg(not(target_arch = "wasm32"))]
-fn unload_local(app: &mut SolveApp) {
+pub(super) fn unload_local(app: &mut SolveApp) {
     if app.agent_chat.running_id == super::local_gguf::AGENT_ID {
         super::disconnect(app);
     }
@@ -592,6 +592,30 @@ fn pointer_section(app: &mut SolveApp, ui: &mut egui::Ui) {
     });
 }
 
+/// Use SolidCraft's existing native file picker. The chat switcher can open
+/// and load in one action; Settings keeps separate Open, Load and Unload buttons.
+#[cfg(not(target_arch = "wasm32"))]
+pub(super) fn pick_local_file(app: &mut SolveApp, ctx: &egui::Context, auto_load: bool) {
+    let wake = ctx.clone();
+    app.pick_file("GGUF model", &["gguf"], move |app, path| {
+        let Some(path) = path else { return };
+        let file = std::path::PathBuf::from(path);
+        if !file.is_file() || !file.extension().is_some_and(|e| e.eq_ignore_ascii_case("gguf")) {
+            app.agent_chat.settings.local.error = Some("Choose an existing .gguf file".into());
+            return;
+        }
+        if auto_load {
+            unload_local(app);
+        }
+        let local = &mut app.agent_chat.settings.local;
+        local.selected = Some(file);
+        local.error = None;
+        if auto_load {
+            start_local(app, &wake, false);
+        }
+    });
+}
+
 /// Small addition to the existing AI settings; all external endpoint controls remain.
 #[cfg(not(target_arch = "wasm32"))]
 fn local_gguf_section(app: &mut SolveApp, ui: &mut egui::Ui) {
@@ -639,18 +663,7 @@ fn local_gguf_section(app: &mut SolveApp, ui: &mut egui::Ui) {
         }
     });
     if open {
-        app.pick_file("GGUF model", &["gguf"], |app, path| {
-            if let Some(path) = path {
-                let file = std::path::PathBuf::from(path);
-                let local = &mut app.agent_chat.settings.local;
-                if file.is_file() && file.extension().is_some_and(|e| e.eq_ignore_ascii_case("gguf")) {
-                    local.selected = Some(file);
-                    local.error = None;
-                } else {
-                    local.error = Some("Choose an existing .gguf file".into());
-                }
-            }
-        });
+        pick_local_file(app, ui.ctx(), false);
     }
     if unload {
         unload_local(app);
