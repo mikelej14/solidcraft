@@ -1047,6 +1047,11 @@ fn switcher(app: &mut SolveApp, ui: &mut egui::Ui) {
         .clamp(90.0, 260.0);
         let mut picked: Option<String> = None;
         let mut add = false;
+        let mut local_open = false;
+        let mut local_unload = false;
+        let local_active = app.agent_chat.settings.local.runtime.endpoint.is_some()
+            || app.agent_chat.settings.local.waiting.is_some()
+            || app.agent_chat.settings.local.preparing.is_some();
         let combo = ui
             .allocate_ui(vec2(w, t.control_height), |ui| {
                 ui.style_mut().wrap_mode = Some(egui::TextWrapMode::Truncate);
@@ -1063,6 +1068,12 @@ fn switcher(app: &mut SolveApp, ui: &mut egui::Ui) {
                     if ui_kit::list_picker(ui, "add", tr("ui.ai_add_agent"), false).clicked() {
                         add = true;
                     }
+                    if ui_kit::list_picker(ui, "gguf-open", "Open and Load GGUF…", false).clicked() {
+                        local_open = true;
+                    }
+                    if local_active && ui_kit::list_picker(ui, "gguf-unload", "Unload local GGUF", false).clicked() {
+                        local_unload = true;
+                    }
                     if ui_kit::list_picker(ui, "settings", tr("ui.ai_settings"), false).clicked() {
                         crate::prefs::open_at(app, crate::prefs::PAGE_AI);
                     }
@@ -1074,6 +1085,12 @@ fn switcher(app: &mut SolveApp, ui: &mut egui::Ui) {
         combo.on_hover_text(tr("ui.ai_switch_tip"));
         if add {
             super::settings::open_add(app);
+        }
+        if local_open {
+            super::settings::pick_local_file(app, ui.ctx(), true);
+        }
+        if local_unload {
+            super::settings::unload_local(app);
         }
         if let Some(id) = picked
             && current.as_ref().is_none_or(|c| c.id != id)
