@@ -139,6 +139,7 @@
       <?if $(var.GgufBundle) = yes ?>
       <Component Id="SolidcraftLocalGgufArchive">
         <File Id="LocalGgufArchive" Source="$(var.BinDir)\local-gguf.zip" KeyPath="yes" />
+        <File Id="LocalGgufLicense" Source="$(var.BinDir)\LLAMA-CPP-LICENSE.txt" />
       </Component>
       <?endif?>
       <!-- Several unversioned files: an explicit GUID (WIX0367). -->
