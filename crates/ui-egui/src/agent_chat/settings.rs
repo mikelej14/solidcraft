@@ -146,7 +146,7 @@ fn launch_local(app: &mut SolveApp, ctx: &egui::Context, server: &std::path::Pat
     let local = &mut app.agent_chat.settings.local;
     let Some(model) = local.selected.clone() else { return };
     // Explicit GPU-only loading: no silent full CPU copy/fallback.
-    match local.runtime.load(&model, server, 99) {
+    match local.runtime.load(&model, server) {
         Err(error) => {
             local.error = Some(error);
             local.status.clear();
