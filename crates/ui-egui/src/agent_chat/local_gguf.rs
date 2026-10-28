@@ -172,7 +172,9 @@ pub fn verify_tool_calling(
                 }
             }
         }],
-        "tool_choice": {"type": "function", "function": {"name": "solidcraft_compatibility_check"}},
+        // llama-server uses a string for tool_choice. With only one tool
+        // available, "required" selects our harmless diagnostic function.
+        "tool_choice": "required",
         "temperature": 0,
         "max_tokens": 192,
         "stream": false,
