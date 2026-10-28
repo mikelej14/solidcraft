@@ -93,6 +93,131 @@ pub struct LocalState {
     pub error: Option<String>,
 }
 
+/// Start only a server owned by this SolidCraft process. Keep the old provider
+/// connected until the new local model has actually finished loading.
+#[cfg(not(target_arch = "wasm32"))]
+fn start_local(app: &mut SolveApp, ctx: &egui::Context, cpu_only: bool) {
+    let local = &mut app.agent_chat.settings.local;
+    let Some(model) = local.selected.clone() else {
+        local.error = Some("Choose a GGUF model first".into());
+        return;
+    };
+    let Some(server) = super::local_gguf::bundled_server() else {
+        local.error = Some("Cannot locate the SolidCraft executable".into());
+        return;
+    };
+    let layers = if cpu_only { 0 } else { 99 };
+    match local.runtime.load(&model, &server, layers) {
+        Err(error) => {
+            local.error = Some(error);
+            local.status.clear();
+        }
+        Ok((endpoint, _)) => {
+            let (sender, receiver) = std::sync::mpsc::channel();
+            let wake = ctx.clone();
+            let result = std::thread::Builder::new()
+                .name("solidcraft-gguf-health".into())
+                .spawn(move || {
+                    let result = super::local_gguf::Runtime::wait_ready(&endpoint, std::time::Duration::from_secs(180));
+                    let _ = sender.send(result);
+                    wake.request_repaint();
+                });
+            if let Err(error) = result {
+                local.runtime.unload();
+                local.error = Some(format!("Cannot start model readiness worker: {error}"));
+                return;
+            }
+            local.waiting = Some(receiver);
+            local.ready = false;
+            local.cpu_retried = cpu_only;
+            local.error = None;
+            local.status = if cpu_only {
+                "Loading GGUF using CPU fallback…".into()
+            } else {
+                "Loading GGUF using Vulkan (CPU fallback available)…".into()
+            };
+            ctx.request_repaint_after(std::time::Duration::from_millis(200));
+        }
+    }
+}
+
+/// Poll without blocking the window. If Vulkan model startup exits or fails,
+/// retry once using CPU-only inference, then report the actual log path.
+#[cfg(not(target_arch = "wasm32"))]
+pub(super) fn poll_local(app: &mut SolveApp, ctx: &egui::Context) {
+    let local = &mut app.agent_chat.settings.local;
+    let pending = local.waiting.is_some();
+    let was_ready = local.ready;
+    if !pending && !was_ready {
+        return;
+    }
+
+    let running = local.runtime.running();
+    if !running {
+        let retry_cpu = pending && !local.cpu_retried;
+        local.waiting = None;
+        local.ready = false;
+        if retry_cpu {
+            start_local(app, ctx, true);
+            return;
+        }
+        let log = local.runtime.log_path.as_ref().map(|p| p.display().to_string()).unwrap_or_default();
+        local.error = Some(format!("Local GGUF server stopped. See log: {log}"));
+        local.status.clear();
+        if app.agent_chat.running_id == super::local_gguf::AGENT_ID {
+            super::disconnect(app);
+        }
+        return;
+    }
+
+    let result = local.waiting.as_ref().and_then(|rx| match rx.try_recv() {
+        Ok(value) => Some(value),
+        Err(std::sync::mpsc::TryRecvError::Disconnected) => Some(Err("Model readiness check ended unexpectedly".into())),
+        Err(std::sync::mpsc::TryRecvError::Empty) => None,
+    });
+    if let Some(result) = result {
+        local.waiting = None;
+        match result {
+            Ok(()) => {
+                local.ready = true;
+                local.status = "GGUF loaded and ready".into();
+                app.agent_chat.agent_id = Some(super::local_gguf::AGENT_ID.into());
+                super::connect(app, ctx);
+            }
+            Err(error) => {
+                let retry_cpu = !local.cpu_retried;
+                local.runtime.unload();
+                if retry_cpu {
+                    start_local(app, ctx, true);
+                } else {
+                    let log = local.runtime.log_path.as_ref().map(|p| p.display().to_string()).unwrap_or_default();
+                    local.error = Some(format!("{error}. Log: {log}"));
+                    local.status.clear();
+                }
+            }
+        }
+    } else if pending {
+        ctx.request_repaint_after(std::time::Duration::from_millis(200));
+    }
+}
+
+/// Explicit unload leaves saved custom URLs and cloud providers untouched.
+#[cfg(not(target_arch = "wasm32"))]
+fn unload_local(app: &mut SolveApp) {
+    if app.agent_chat.running_id == super::local_gguf::AGENT_ID {
+        super::disconnect(app);
+    }
+    if app.agent_chat.agent_id.as_deref() == Some(super::local_gguf::AGENT_ID) {
+        app.agent_chat.agent_id = None;
+    }
+    let local = &mut app.agent_chat.settings.local;
+    local.waiting = None;
+    local.ready = false;
+    local.runtime.unload();
+    local.error = None;
+    local.status = "Local GGUF unloaded".into();
+}
+
 #[cfg(not(target_arch = "wasm32"))]
 struct CapabilityCheck {
     key: (String, String),
