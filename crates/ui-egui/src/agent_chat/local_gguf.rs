@@ -34,7 +34,7 @@ impl Runtime {
         if self.running() {
             return Err("Unload the current GGUF model first".into());
         }
-        if !model.is_file() || !model.extension().is_some_and(|e| e.eq_ignore_ascii_case("gguf")) {
+        if !model.is_file() || !model.extension().and_then(|e| e.to_str()).is_some_and(|e| e.eq_ignore_ascii_case("gguf")) {
             return Err("Select an existing .gguf model file".into());
         }
         if !executable.is_file() {
@@ -45,7 +45,7 @@ impl Runtime {
         let port = listener.local_addr().map_err(|e| e.to_string())?.port();
         drop(listener);
 
-        let name = model.file_name().ok_or("Model file has no name")?.to_string_lossy().into_owned();
+        let name = model.file_name().and_then(|s| s.to_str()).ok_or("Model file has no valid UTF-8 name")?.to_string();
         let log_path = std::env::temp_dir().join(format!("solidcraft-llama-{}.log", std::process::id()));
         let log = OpenOptions::new().create(true).write(true).truncate(true).open(&log_path)
             .map_err(|e| format!("Cannot open model log: {e}"))?;
