@@ -90,7 +90,6 @@ pub struct LocalState {
     pub(super) waiting: Option<std::sync::mpsc::Receiver<LocalCheckEvent>>,
     /// Unpacks the signed and checksum-pinned runtime without freezing CAD.
     pub(super) preparing: Option<std::sync::mpsc::Receiver<Result<std::path::PathBuf, String>>>,
-    cpu_retried: bool,
     pub status: String,
     pub error: Option<String>,
 }
@@ -109,7 +108,7 @@ pub(super) enum LocalCheckEvent {
 /// Start only a server owned by this SolidCraft process. Keep the old provider
 /// connected until the new local model has actually finished loading.
 #[cfg(not(target_arch = "wasm32"))]
-fn start_local(app: &mut SolveApp, ctx: &egui::Context, cpu_only: bool) {
+fn start_local(app: &mut SolveApp, ctx: &egui::Context) {
     let local = &mut app.agent_chat.settings.local;
     let Some(model) = local.selected.as_ref() else {
         local.error = Some("Choose a GGUF model first".into());
@@ -131,7 +130,6 @@ fn start_local(app: &mut SolveApp, ctx: &egui::Context, cpu_only: bool) {
     {
         Ok(_) => {
             local.preparing = Some(receiver);
-            local.cpu_retried = cpu_only;
             local.status = "Preparing built-in GGUF runtime…".into();
             local.error = None;
             ctx.request_repaint_after(std::time::Duration::from_millis(200));
@@ -147,9 +145,8 @@ fn launch_local(app: &mut SolveApp, ctx: &egui::Context, server: &std::path::Pat
     let http = app.services.agent_http.clone();
     let local = &mut app.agent_chat.settings.local;
     let Some(model) = local.selected.clone() else { return };
-    let cpu_only = local.cpu_retried;
-    let layers = if cpu_only { 0 } else { 99 };
-    match local.runtime.load(&model, server, layers) {
+    // Explicit GPU-only loading: no silent full CPU copy/fallback.
+    match local.runtime.load(&model, server, 99) {
         Err(error) => {
             local.error = Some(error);
             local.status.clear();
@@ -185,11 +182,7 @@ fn launch_local(app: &mut SolveApp, ctx: &egui::Context, server: &std::path::Pat
                     local.waiting = Some(receiver);
                     local.ready = false;
                     local.error = None;
-                    local.status = if cpu_only {
-                        "Loading GGUF using CPU fallback…".into()
-                    } else {
-                        "Loading GGUF using Vulkan (CPU fallback available)…".into()
-                    };
+                    local.status = "Loading GGUF on Vulkan GPU only (no CPU fallback)…".into();
                     ctx.request_repaint_after(std::time::Duration::from_millis(200));
                 }
                 Err(error) => {
@@ -201,8 +194,8 @@ fn launch_local(app: &mut SolveApp, ctx: &egui::Context, server: &std::path::Pat
     }
 }
 
-/// Poll without blocking the window. If Vulkan model startup exits or fails,
-/// retry once using CPU-only inference, then report the actual log path.
+/// Poll without blocking the window. If the GPU cannot load the model,
+/// release the server and report the failure; never silently start CPU inference.
 #[cfg(not(target_arch = "wasm32"))]
 pub(super) fn poll_local(app: &mut SolveApp, ctx: &egui::Context) {
     if app.agent_chat.settings.local.preparing.is_some() {
@@ -235,13 +228,8 @@ pub(super) fn poll_local(app: &mut SolveApp, ctx: &egui::Context) {
 
     let running = local.runtime.running();
     if !running {
-        let retry_cpu = pending && !local.cpu_retried;
         local.waiting = None;
         local.ready = false;
-        if retry_cpu {
-            start_local(app, ctx, true);
-            return;
-        }
         let log = local.runtime.log_path.as_ref().map(|p| p.display().to_string()).unwrap_or_default();
         local.error = Some(format!("Local GGUF server stopped. See log: {log}"));
         local.status.clear();
@@ -271,15 +259,10 @@ pub(super) fn poll_local(app: &mut SolveApp, ctx: &egui::Context) {
             }
             LocalCheckEvent::StartupFailed(error) => {
                 local.waiting = None;
-                let retry_cpu = !local.cpu_retried;
                 local.runtime.unload();
-                if retry_cpu {
-                    start_local(app, ctx, true);
-                } else {
-                    let log = local.runtime.log_path.as_ref().map(|p| p.display().to_string()).unwrap_or_default();
-                    local.error = Some(format!("{error}. Log: {log}"));
-                    local.status.clear();
-                }
+                let log = local.runtime.log_path.as_ref().map(|p| p.display().to_string()).unwrap_or_default();
+                local.error = Some(format!("{error}. GPU-only model load failed; no CPU fallback attempted. Log: {log}"));
+                local.status.clear();
             }
             LocalCheckEvent::ToolsFailed(error) => {
                 // Retrying on CPU cannot fix a model/tool-template protocol
@@ -657,7 +640,7 @@ pub(super) fn pick_local_file(app: &mut SolveApp, ctx: &egui::Context, auto_load
         local.selected = Some(file);
         local.error = None;
         if auto_load {
-            start_local(app, &wake, false);
+            start_local(app, &wake);
         }
     });
 }
@@ -714,7 +697,7 @@ fn local_gguf_section(app: &mut SolveApp, ui: &mut egui::Ui) {
     if unload {
         unload_local(app);
     } else if load {
-        start_local(app, ui.ctx(), false);
+        start_local(app, ui.ctx());
     }
 }
 
