@@ -95,11 +95,37 @@ foreach ($check in @(@('solidcraft.exe', 2), @('solidcraft-cli.exe', 3), @('solv
   Write-Output "ok $($check[0]): $Arch, PE subsystem $($h.Subsystem)"
 }
 & (Join-Path $PSScriptRoot 'check-icon.ps1') -Path (Join-Path $CheckDir 'solidcraft.exe')
+# A pinned, verified llama.cpp Vulkan runtime is carried inside the MSI and portable
+# ZIP. The app extracts it to per-user storage only when the user presses Load.
+# Upstream does not publish an x86 Windows binary: those installers keep their
+# original capabilities and the custom URL providers.
+$GgufBundle = if ($Arch -eq 'x86') { 'no' } else { 'yes' }
+$GgufTag = 'b11966'
+$GgufSha256 = switch ($Arch) {
+  'x64' { '977dc4569c0a3f644c5855f1bb836b66e45fe6aefbe739adac0928ea607bebf9' }
+  'arm64' { '37dbf214474951ca1bc1242ad0464e598fbfcd442feb6ec034ef21b79eb2b443' }
+  default { '' }
+}
 if ($Phase -ne 'package') {
   Remove-Item -Recurse -Force $Stage -ErrorAction SilentlyContinue
   New-Item -ItemType Directory -Force -Path $Stage | Out-Null
   Copy-Item (Join-Path $Bin 'solidcraft.exe'), (Join-Path $Bin 'solidcraft-cli.exe'), (Join-Path $Bin 'solvecraft-cli.exe') $Stage
   foreach ($f in 'LICENSE-MIT', 'LICENSE-APACHE', 'NOTICE', 'THIRD-PARTY-LICENSES.txt') { Copy-Item (Join-Path $Root $f) $Stage }
+  if ($GgufBundle -eq 'yes') {
+    $Asset = "llama-$GgufTag-bin-win-vulkan-$Arch.zip"
+    $Url = "https://github.com/ggml-org/llama.cpp/releases/download/$GgufTag/$Asset"
+    $Archive = Join-Path $Stage 'local-gguf.zip'
+    Write-Output "Downloading pinned llama.cpp runtime: $Asset"
+    Invoke-WebRequest -Uri $Url -OutFile $Archive
+    $ActualHash = (Get-FileHash -Algorithm SHA256 $Archive).Hash.ToLowerInvariant()
+    if ($ActualHash -ne $GgufSha256) {
+      Remove-Item -Force $Archive
+      throw "llama.cpp archive SHA-256 mismatch (expected $GgufSha256, got $ActualHash)"
+    }
+  }
+}
+if ($GgufBundle -eq 'yes' -and !(Test-Path (Join-Path $Stage 'local-gguf.zip'))) {
+  throw "The verified local GGUF runtime archive is missing from staging"
 }
 if ($Phase -eq 'stage') {
   Write-Output "staged for signing: $Stage"
@@ -115,7 +141,7 @@ Invoke-Native 'wix build' {
   wix build (Join-Path $Root 'assets/platforms/windows/solidcraft.wxs') -arch $Arch `
     -ext WixToolset.UI.wixext -ext WixToolset.Util.wixext `
     -culture en-US -loc (Join-Path $Root 'assets/platforms/windows/solidcraft.en-us.wxl') `
-    -d "Version=$MsiVersion" -d "DisplayVersion=$Version" -d "BinDir=$Stage" -d "IconPath=$Icon" `
+    -d "Version=$MsiVersion" -d "DisplayVersion=$Version" -d "BinDir=$Stage" -d "IconPath=$Icon" -d "GgufBundle=$GgufBundle" `
     -o $Msi
 }
 Invoke-Native 'MSI shortcut icon validation (ICE50)' {
@@ -129,6 +155,7 @@ $Portable = Join-Path $TargetDir "windows-package\solidcraft-$Version-windows-$A
 Remove-Item -Recurse -Force $Portable -ErrorAction SilentlyContinue
 New-Item -ItemType Directory -Force -Path $Portable | Out-Null
 Copy-Item (Join-Path $Stage '*.exe') $Portable
+if ($GgufBundle -eq 'yes') { Copy-Item (Join-Path $Stage 'local-gguf.zip') $Portable }
 foreach ($f in 'README.md', 'LICENSE-MIT', 'LICENSE-APACHE', 'NOTICE', 'THIRD-PARTY-LICENSES.txt') { Copy-Item (Join-Path $Root $f) $Portable }
 $Zip = Join-Path $Dist "solidcraft-$Version-windows-$Arch-portable.zip"
 Remove-Item -Force $Zip -ErrorAction SilentlyContinue
