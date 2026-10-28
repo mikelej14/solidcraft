@@ -909,7 +909,11 @@ pub fn connect(app: &mut SolveApp, ctx: &egui::Context) {
     };
     match started {
         Ok(b) => {
-            app.preferences.agent_last = entry.id.clone();
+            // A managed local server is transient: keep the user's last
+            // external provider as the next-launch default.
+            if entry.id != local_gguf::AGENT_ID {
+                app.preferences.agent_last = entry.id.clone();
+            }
             chat.backend = Some(b);
             chat.argv = entry.argv.clone();
             chat.running_id = entry.id.clone();
@@ -985,6 +989,8 @@ pub fn disconnect(app: &mut SolveApp) {
 pub fn shutdown(app: &mut SolveApp) {
     app.agent_chat.disconnect_document(&mut app.session, true);
     crate::documents::disconnect_background_chats(app, true);
+    #[cfg(not(target_arch = "wasm32"))]
+    app.agent_chat.settings.local.runtime.unload();
 }
 
 /// A tab switch stops this turn before its session leaves the app. Keep the backend's own
@@ -1731,6 +1737,15 @@ pub fn poll(app: &mut SolveApp, ctx: &egui::Context) {
         // Turned back on later, AI features don't connect as if SolidCraft were starting.
         app.agent_chat.connect_at_start = false;
         crate::documents::disconnect_background_chats(app, false);
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            app.agent_chat.settings.local.runtime.unload();
+            app.agent_chat.settings.local.waiting = None;
+            app.agent_chat.settings.local.ready = false;
+            if app.agent_chat.agent_id.as_deref() == Some(local_gguf::AGENT_ID) {
+                app.agent_chat.agent_id = None;
+            }
+        }
         if app.agent_chat.backend.is_some() || app.agent_chat.open {
             disconnect(app);
             app.agent_chat.open = false;
@@ -1763,6 +1778,7 @@ pub fn poll(app: &mut SolveApp, ctx: &egui::Context) {
     }
     #[cfg(not(target_arch = "wasm32"))]
     {
+        settings::poll_local(app, ctx);
         settings::poll_capabilities(app, ctx);
         connect_at_start(app, ctx);
     }
