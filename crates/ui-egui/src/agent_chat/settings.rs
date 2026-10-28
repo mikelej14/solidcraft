@@ -87,7 +87,7 @@ pub struct LocalState {
     pub runtime: super::local_gguf::Runtime,
     /// Only expose this provider to the chat after llama.cpp reports model readiness.
     pub ready: bool,
-    waiting: Option<std::sync::mpsc::Receiver<Result<(), String>>>,
+    pub(super) waiting: Option<std::sync::mpsc::Receiver<Result<(), String>>>,
     cpu_retried: bool,
     pub status: String,
     pub error: Option<String>,
