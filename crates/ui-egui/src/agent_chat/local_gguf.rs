@@ -12,6 +12,19 @@ use std::time::{Duration, Instant};
 /// The ID of the temporary provider; it is never saved to user preferences.
 pub const AGENT_ID: &str = "solidcraft-native-local-gguf";
 
+// Exclusive GPU inference settings. Keep them in one place so a regression
+// cannot silently reactivate CPU fallback or model-file memory mapping.
+// AMD integrated GPUs still share real physical system RAM with the CPU.
+fn gpu_only_flags() -> &'static [&'static str] {
+    &[
+        "--gpu-layers", "all", // Full GPU offload, including output layer
+        "--fit", "off",       // Do not automatically move weights to the CPU
+        "--no-host",          // Bypass redundant host staging for GPU tensors
+        "--load-mode", "none",// Modern llama.cpp: no model-file mmap or mlock
+        "--jinja",            // Embedded GGUF model-specific tool-call template
+    ]
+}
+
 #[derive(Default)]
 pub struct Runtime {
     child: Option<Child>,
@@ -30,7 +43,7 @@ impl Runtime {
     }
 
     /// Launches promptly; use wait_ready on a worker before connecting the chat.
-    pub fn load(&mut self, model: &Path, executable: &Path, gpu_layers: u32) -> Result<(String, String), String> {
+    pub fn load(&mut self, model: &Path, executable: &Path) -> Result<(String, String), String> {
         if self.running() {
             return Err("Unload the current GGUF model first".into());
         }
@@ -55,14 +68,11 @@ impl Runtime {
             // required for OpenAI-compatible structured tool calls (Qwen,
             // Granite, Ministral, and other supported GGUF families).
             // Never guess or impose a ChatML template from the filename.
-            // No implicit CPU layer fallback: if the chosen GGUF cannot fit on
-            // the configured GPU, report the failure instead of quietly
-            // loading a second full CPU-side model. 99 covers small models.
-            // --no-host bypasses the extra host staging buffer for offload.
-            // --no-mmap avoids leaving a mapped model-file view as another
-            // apparent resident allocation while GPU weights are loaded.
-            // These flags do not make GPU VRAM physically separate on an APU.
-            .args(["--host", "127.0.0.1", "--port", &port.to_string(), "--ctx-size", "8192", "--gpu-layers", &gpu_layers.to_string(), "--jinja", "--fit", "off", "--no-host", "--no-mmap"])
+            // No hidden CPU copy or fallback: the model must fit on the GPU.
+            // The GGUF file is not memory-mapped, and Vulkan offload avoids
+            // an additional host staging buffer where supported.
+            .args(["--host", "127.0.0.1", "--port", &port.to_string(), "--ctx-size", "8192"])
+            .args(gpu_only_flags())
             .arg("--model").arg(model)
             .arg("--alias").arg(&name)
             .stdin(Stdio::null())
@@ -319,9 +329,20 @@ mod tests {
     use super::*;
 
     #[test]
+    fn gpu_launch_flags_prevent_unrequested_cpu_copy_or_mmap() {
+        let flags = gpu_only_flags();
+        assert!(flags.windows(2).any(|args| args == ["--gpu-layers", "all"]));
+        assert!(flags.windows(2).any(|args| args == ["--fit", "off"]));
+        assert!(flags.windows(2).any(|args| args == ["--load-mode", "none"]));
+        assert!(flags.contains(&"--no-host"));
+        assert!(flags.contains(&"--jinja"));
+        assert!(!flags.iter().any(|f| *f == "0" || *f == "--mlock" || *f == "--mmap"));
+    }
+
+    #[test]
     fn missing_executable_does_not_create_server() {
         let mut runtime = Runtime::default();
-        assert!(runtime.load(Path::new("missing-model.gguf"), Path::new("missing-runtime"), 99).is_err());
+        assert!(runtime.load(Path::new("missing-model.gguf"), Path::new("missing-runtime")).is_err());
         assert!(!runtime.running());
     }
 
@@ -331,7 +352,7 @@ mod tests {
         // Simulate a connected runtime whose child is still owned. A model
         // switch must unload the previous child before launching another.
         // A missing model cannot accidentally spawn a duplicate server.
-        assert!(runtime.load(Path::new("nonexistent.gguf"), Path::new("llama-server.exe"), 99).is_err());
+        assert!(runtime.load(Path::new("nonexistent.gguf"), Path::new("llama-server.exe")).is_err());
         assert!(!runtime.running());
     }
 
