@@ -137,7 +137,7 @@
            verified archive remains side by side with SolidCraft; x86 has no
            upstream llama.cpp binary and keeps its original installer. -->
       <?if $(var.GgufBundle) = yes ?>
-      <Component Id="SolidcraftLocalGgufArchive">
+      <Component Id="SolidcraftLocalGgufArchive" Guid="BD9F7167-7E54-4D20-906D-1ABF7BF87445">
         <File Id="LocalGgufArchive" Source="$(var.BinDir)\local-gguf.zip" KeyPath="yes" />
         <File Id="LocalGgufLicense" Source="$(var.BinDir)\LLAMA-CPP-LICENSE.txt" />
       </Component>
