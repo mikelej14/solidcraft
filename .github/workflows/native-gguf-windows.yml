@@ -43,9 +43,11 @@ jobs:
         uses: Swatinem/rust-cache@v2
         with:
           key: solidcraft-native-gguf-msi
-      - name: Format check
+      - name: Apply rustfmt before building
         shell: pwsh
-        run: cargo fmt --all -- --check
+        run: |
+          cargo fmt --all
+          cargo fmt --all -- --check
       - name: Type check native assistant
         shell: pwsh
         run: cargo check --locked -p solidcraft-ui-egui
