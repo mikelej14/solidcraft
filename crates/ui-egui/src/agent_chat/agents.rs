@@ -337,6 +337,37 @@ pub fn normalize_url(url: &str) -> Result<String, String> {
 mod tests {
     use super::*;
 
+    #[cfg(not(target_arch = "wasm32"))]
+    #[test]
+    fn local_gguf_is_transient_and_external_urls_are_preserved() {
+        let mut app = crate::SolveApp::new(Default::default(), Default::default());
+        let remote = AgentConfig {
+            id: "my-custom-url".into(),
+            name: "My existing endpoint".into(),
+            kind: Kind::Api,
+            base_url: "http://127.0.0.1:11434/v1".into(),
+            model: "old-model".into(),
+            ..Default::default()
+        };
+        app.preferences.agents.push(remote.clone());
+        let before = app.preferences.agents.clone();
+        let local = &mut app.agent_chat.settings.local;
+        local.ready = true;
+        local.runtime.endpoint = Some("http://127.0.0.1:32123/v1".into());
+        local.runtime.model_path = Some(std::path::PathBuf::from("chosen.gguf"));
+        let all = entries(&app);
+        assert!(all.iter().any(|e| e.id == remote.id && e.base_url == remote.base_url));
+        let native = all.iter().find(|e| e.id == super::local_gguf::AGENT_ID).expect("native GGUF entry");
+        assert_eq!(native.kind, Kind::Api);
+        assert_eq!(native.model, "chosen.gguf");
+        assert_eq!(native.base_url, "http://127.0.0.1:32123/v1");
+        assert!(!native.key);
+        assert_eq!(app.preferences.agents, before, "local provider must not alter saved entries");
+        app.agent_chat.settings.local.ready = false;
+        assert!(!entries(&app).iter().any(|e| e.id == super::local_gguf::AGENT_ID));
+        assert_eq!(app.preferences.agents, before);
+    }
+
     #[test]
     fn keys_go_only_over_https_or_to_this_computer() {
         assert!(key_safe_for("https://api.openai.com/v1"));
