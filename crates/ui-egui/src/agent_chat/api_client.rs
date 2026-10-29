@@ -22,6 +22,11 @@ use super::process::{AgentProcess, FromAgent, ProcessHandle};
 
 /// Longest tool result handed back to the model.
 const MAX_TOOL_TEXT: usize = 20_000;
+/// A small local model cannot afford the general-purpose tool response budget.
+const LOCAL_TOOL_TEXT: usize = 2_400;
+const LOCAL_OLD_TOOL_TEXT: usize = 320;
+const LOCAL_MAX_HISTORY: usize = 48;
+const LOCAL_CAD_GUIDANCE: &str = "You are operating SolidCraft CAD through the supplied tools. For a modeling request, call the appropriate provided tool; do not describe an action as completed until a tool confirms it. Use only command names and JSON fields in tool schemas. Make the smallest valid operation, inspect tool errors and correct arguments rather than repeating them. When creating or editing geometry, verify the resulting dimensions or model state with a read tool when available. Keep replies short and do not print tool-call JSON as normal text.";
 /// Messages kept in the conversation (the system note stays).
 const MAX_HISTORY: usize = 240;
 /// Pictures of the view kept in the conversation. The whole history goes with every request
@@ -875,6 +880,20 @@ impl Worker {
     }
 
     fn turn(&mut self, parts: Vec<PromptPart>) {
+        if self.is_local_gguf() {
+            // Older tool outputs are replayed in every request. Keep the actual
+            // tool-call/result relationship, but not pages of stale geometry dumps.
+            for message in &mut self.history {
+                if message.get("role").and_then(Value::as_str) == Some("tool") {
+                    if let Some(text) = message.get("content").and_then(Value::as_str) {
+                        if text.chars().count() > LOCAL_OLD_TOOL_TEXT {
+                            let short: String = text.chars().take(LOCAL_OLD_TOOL_TEXT).collect();
+                            message["content"] = json!(format!("{short} …[earlier tool result shortened]"));
+                        }
+                    }
+                }
+            }
+        }
         self.history.push(user_message(self.cfg.protocol, &parts));
         drop_old_views(&mut self.history, MAX_HISTORY_IMAGES);
         self.trim_history();
@@ -937,7 +956,7 @@ impl Worker {
                     (format!("unknown tool `{}`", c.name), true)
                 } else {
                     match self.mcp_call("tools/call", json!({"name": c.name, "arguments": args})) {
-                        Ok(r) => tool_text(&r),
+                        Ok(r) => tool_text_with_limit(&r, if self.is_local_gguf() { LOCAL_TOOL_TEXT } else { MAX_TOOL_TEXT }),
                         Err(e) => (e, true),
                     }
                 };
@@ -965,8 +984,14 @@ impl Worker {
 
     /// Keep the conversation bounded and starting at a user message, so neither protocol sees a
     /// reply or a tool result without the message it answers.
+    fn is_local_gguf(&self) -> bool {
+        self.cfg.base_url.starts_with("http://127.0.0.1:")
+            && self.cfg.name.to_ascii_lowercase().contains("gguf")
+    }
+
     fn trim_history(&mut self) {
-        while self.history.len() > MAX_HISTORY {
+        let max_history = if self.is_local_gguf() { LOCAL_MAX_HISTORY } else { MAX_HISTORY };
+        while self.history.len() > max_history {
             self.history.remove(0);
         }
         while self.history.first().is_some_and(|m| !starts_a_turn(m)) {
@@ -1134,7 +1159,12 @@ impl Worker {
         match self.cfg.protocol {
             Protocol::OpenAi => {
                 let mut messages = Vec::with_capacity(self.history.len() + 1);
-                messages.push(json!({"role": "system", "content": super::acp::SYSTEM_NOTE}));
+                let system_note = if self.is_local_gguf() {
+                    format!("{}\n\n{}", super::acp::SYSTEM_NOTE, LOCAL_CAD_GUIDANCE)
+                } else {
+                    super::acp::SYSTEM_NOTE.to_string()
+                };
+                messages.push(json!({"role": "system", "content": system_note}));
                 messages.extend(self.history.iter().cloned());
                 let mut body = json!({"model": self.cfg.model, "messages": messages});
                 if !self.tools.is_empty() {
@@ -1596,6 +1626,10 @@ pub fn test_anthropic_endpoint(http: &HttpFn, base_url: &str, key: Option<&str>,
 
 /// A tool call's result as text for the model, and whether it failed.
 fn tool_text(r: &Value) -> (String, bool) {
+    tool_text_with_limit(r, MAX_TOOL_TEXT)
+}
+
+fn tool_text_with_limit(r: &Value, limit: usize) -> (String, bool) {
     let failed = r.get("isError").and_then(Value::as_bool).unwrap_or(false);
     let parts: Vec<String> = r
         .get("content")
@@ -1612,8 +1646,8 @@ fn tool_text(r: &Value) -> (String, bool) {
         })
         .unwrap_or_default();
     let mut text = parts.join("\n");
-    if text.len() > MAX_TOOL_TEXT {
-        let mut cut = MAX_TOOL_TEXT;
+    if text.len() > limit {
+        let mut cut = limit;
         while !text.is_char_boundary(cut) {
             cut -= 1;
         }
