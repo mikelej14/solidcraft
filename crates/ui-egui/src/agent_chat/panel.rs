@@ -1278,7 +1278,14 @@ fn picker(app: &mut SolveApp, ui: &mut egui::Ui) {
         no_agents(ui);
     }
     let missing: Vec<discover::Missing> = app.agent_chat.detection.as_ref().map(|d| d.missing.clone()).unwrap_or_default();
-    if !missing.is_empty() {
+    // Missing external coding agents are irrelevant while the native GGUF is
+    // selected, loading, or already connected. Do not display their install hint.
+    let local_selected = app.agent_chat.agent_id.as_deref() == Some(super::local_gguf::AGENT_ID);
+    let local_active = app.agent_chat.settings.local.ready
+        || app.agent_chat.settings.local.runtime.endpoint.is_some()
+        || app.agent_chat.settings.local.waiting.is_some()
+        || app.agent_chat.settings.local.preparing.is_some();
+    if !missing.is_empty() && !(local_selected || local_active) {
         let heading = if all.is_empty() && !flatpak_hint { tr("ui.agent_chat_none_found") } else { tr("ui.agent_chat_not_installed") };
         ui_kit::section(ui, "sc_agent_missing", heading, all.is_empty(), |ui| {
             for m in missing {
