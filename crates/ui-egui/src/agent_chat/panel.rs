@@ -960,17 +960,7 @@ fn desktop_body(app: &mut SolveApp, ui: &mut egui::Ui) {
                             .on_hover_text(tr("ui.agent_chat_attach_view_tip"))
                             .on_disabled_hover_text(tr("ui.agent_chat_no_images"));
                         crate::scenario::publish_handle("agent_chat:attach", attach.rect.center());
-                        // What is selected in the model goes with the message: text for the agent,
-                        // chips in the conversation.
-                        let selected = selected_count(app);
-                        let label = if selected > 0 {
-                            format!("{} ({selected})", tr("ui.agent_chat_attach_selection"))
-                        } else {
-                            tr("ui.agent_chat_attach_selection").to_string()
-                        };
-                        let pick = ui_kit::checkbox(ui, &label, &mut app.agent_chat.attach_selection)
-                            .on_hover_text(tr("ui.agent_chat_attach_selection_tip"));
-                        crate::scenario::publish_handle("agent_chat:attach_selection", pick.rect.center());
+                        // Use the existing explicit Pick context tool rather than a second checkbox.
                         // Choose faces, edges, features and bodies on purpose, then OK.
                         let picker = ui_kit::button(ui, tr("ui.agent_chat_pick_context"), ui_kit::Button::Enabled(app.dialog.is_none()))
                             .on_hover_text(tr("ui.agent_chat_pick_context_tip"));
