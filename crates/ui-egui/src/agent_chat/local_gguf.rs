@@ -36,6 +36,7 @@ pub struct Runtime {
     pub model_path: Option<PathBuf>,
     pub endpoint: Option<String>,
     pub log_path: Option<PathBuf>,
+    pub vision: bool,
 }
 
 impl Runtime {
@@ -47,8 +48,24 @@ impl Runtime {
         self.child.is_some()
     }
 
+    /// Locate an unambiguous nearby multimodal projector.
+    pub fn discover_projector(model: &Path) -> Option<PathBuf> {
+        let candidates: Vec<PathBuf> = std::fs::read_dir(model.parent()?).ok()?
+            .filter_map(Result::ok)
+            .map(|entry| entry.path())
+            .filter(|path| {
+                path.is_file()
+                    && path.extension().is_some_and(|e| e.eq_ignore_ascii_case("gguf"))
+                    && path.file_stem().is_some_and(|name| {
+                        let name = name.to_string_lossy().to_ascii_lowercase();
+                        name.contains("mmproj") || name.contains("projector")
+                    })
+            }).collect();
+        if candidates.len() == 1 { candidates.into_iter().next() } else { None }
+    }
+
     /// Launches promptly; use wait_ready on a worker before connecting the chat.
-    pub fn load(&mut self, model: &Path, executable: &Path, context_size: u32) -> Result<(String, String), String> {
+    pub fn load(&mut self, model: &Path, executable: &Path, context_size: u32, projector: Option<&Path>) -> Result<(String, String), String> {
         if !(MIN_CONTEXT_SIZE..=MAX_CONTEXT_SIZE).contains(&context_size) {
             return Err(format!("GGUF context size must be between {MIN_CONTEXT_SIZE} and {MAX_CONTEXT_SIZE} tokens"));
         }
@@ -61,6 +78,11 @@ impl Runtime {
         if !executable.is_file() {
             return Err(format!("Bundled llama-server not found at {}. Install the GGUF-enabled SolidCraft package.", executable.display()));
         }
+        if let Some(projector) = projector {
+            if !projector.is_file() || !projector.extension().is_some_and(|e| e.eq_ignore_ascii_case("gguf")) {
+                return Err("The selected vision projector must be an existing .gguf file".into());
+            }
+        }
         let listener = TcpListener::bind(SocketAddrV4::new(Ipv4Addr::LOCALHOST, 0))
             .map_err(|e| format!("Could not choose a localhost port: {e}"))?;
         let port = listener.local_addr().map_err(|e| e.to_string())?.port();
@@ -71,7 +93,11 @@ impl Runtime {
         let log = OpenOptions::new().create(true).write(true).truncate(true).open(&log_path)
             .map_err(|e| format!("Cannot open model log: {e}"))?;
         let err_log = log.try_clone().map_err(|e| e.to_string())?;
-        let child = Command::new(executable)
+        let mut command = Command::new(executable);
+        if let Some(projector) = projector {
+            command.arg("--mmproj").arg(projector);
+        }
+        let child = command
             // Let llama.cpp select the model's embedded chat template. Jinja is
             // required for OpenAI-compatible structured tool calls (Qwen,
             // Granite, Ministral, and other supported GGUF families).
@@ -88,6 +114,7 @@ impl Runtime {
             .stderr(Stdio::from(err_log))
             .spawn().map_err(|e| format!("Failed to start llama-server: {e}"))?;
         let endpoint = format!("http://127.0.0.1:{port}/v1");
+        self.vision = projector.is_some();
         self.model_path = Some(model.to_path_buf());
         self.endpoint = Some(endpoint.clone());
         self.log_path = Some(log_path);
@@ -350,7 +377,7 @@ mod tests {
     #[test]
     fn missing_executable_does_not_create_server() {
         let mut runtime = Runtime::default();
-        assert!(runtime.load(Path::new("missing-model.gguf"), Path::new("missing-runtime"), DEFAULT_CONTEXT_SIZE).is_err());
+        assert!(runtime.load(Path::new("missing-model.gguf"), Path::new("missing-runtime"), DEFAULT_CONTEXT_SIZE, None).is_err());
         assert!(!runtime.running());
     }
 
@@ -360,7 +387,7 @@ mod tests {
         // Simulate a connected runtime whose child is still owned. A model
         // switch must unload the previous child before launching another.
         // A missing model cannot accidentally spawn a duplicate server.
-        assert!(runtime.load(Path::new("nonexistent.gguf"), Path::new("llama-server.exe"), DEFAULT_CONTEXT_SIZE).is_err());
+        assert!(runtime.load(Path::new("nonexistent.gguf"), Path::new("llama-server.exe"), DEFAULT_CONTEXT_SIZE, None).is_err());
         assert!(!runtime.running());
     }
 
