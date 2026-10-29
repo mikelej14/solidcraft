@@ -2757,6 +2757,7 @@ pub fn take_theme_paste(app: &mut SolveApp, ctx: &egui::Context) {
 }
 
 /// Files dropped on the theme Import tile are themes to import, not designs to open (#8226).
+#[cfg(not(target_arch = "wasm32"))]
 pub fn take_theme_drops(app: &mut SolveApp, ctx: &egui::Context) {
     let Some(rect) = app.prefs_window.import_tile.filter(|_| app.prefs_window.open) else { return };
     if !ctx.input(|i| !i.raw.dropped_files.is_empty() && i.pointer.latest_pos().is_some_and(|p| rect.contains(p))) {
@@ -2771,6 +2772,11 @@ pub fn take_theme_drops(app: &mut SolveApp, ctx: &egui::Context) {
         import_theme_text(app, text);
     }
 }
+
+// Web builds use a different asynchronous dropped-file interface. Do not
+// call the native-only DroppedFile::bytes method on wasm.
+#[cfg(target_arch = "wasm32")]
+pub fn take_theme_drops(_app: &mut SolveApp, _ctx: &egui::Context) {}
 
 pub fn import_theme(app: &mut SolveApp, v: &serde_json::Value) -> Result<String, String> {
     let theme = match v {
