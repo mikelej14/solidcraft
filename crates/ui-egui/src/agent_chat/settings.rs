@@ -85,6 +85,7 @@ pub struct LocalState {
     pub selected: Option<std::path::PathBuf>,
     /// Context length, in tokens, used on the next local model load.
     pub context_size: u32,
+    pub projector: Option<std::path::PathBuf>,
     pub runtime: super::local_gguf::Runtime,
     /// Only expose this provider to the chat after llama.cpp reports model readiness.
     pub ready: bool,
@@ -101,6 +102,7 @@ impl Default for LocalState {
         Self {
             selected: None,
             context_size: super::local_gguf::DEFAULT_CONTEXT_SIZE,
+            projector: None,
             runtime: Default::default(),
             ready: false,
             waiting: None,
@@ -163,7 +165,8 @@ fn launch_local(app: &mut SolveApp, ctx: &egui::Context, server: &std::path::Pat
     let local = &mut app.agent_chat.settings.local;
     let Some(model) = local.selected.clone() else { return };
     // Explicit GPU-only loading: no silent full CPU copy/fallback.
-    match local.runtime.load(&model, server, local.context_size) {
+    let projector = local.projector.clone().or_else(|| super::local_gguf::Runtime::discover_projector(&model));
+    match local.runtime.load(&model, server, local.context_size, projector.as_deref()) {
         Err(error) => {
             local.error = Some(error);
             local.status.clear();
@@ -655,9 +658,24 @@ pub(super) fn pick_local_file(app: &mut SolveApp, ctx: &egui::Context, auto_load
         }
         let local = &mut app.agent_chat.settings.local;
         local.selected = Some(file);
+        local.projector = None;
         local.error = None;
         if auto_load {
             start_local(app, &wake);
+        }
+    });
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn pick_projector_file(app: &mut SolveApp) {
+    app.pick_file("Vision projector GGUF", &["gguf"], move |app, path| {
+        let Some(path) = path else { return };
+        let path = std::path::PathBuf::from(path);
+        if path.is_file() && path.extension().is_some_and(|e| e.eq_ignore_ascii_case("gguf")) {
+            app.agent_chat.settings.local.projector = Some(path);
+            app.agent_chat.settings.local.error = None;
+        } else {
+            app.agent_chat.settings.local.error = Some("Select a valid vision projector .gguf file".into());
         }
     });
 }
@@ -678,6 +696,8 @@ fn local_gguf_section(app: &mut SolveApp, ui: &mut egui::Ui) {
     let error = local.error.clone();
 
     let mut open = false;
+    let mut pick_projector = false;
+    let mut autodetect_projector = false;
     let mut load = false;
     let mut unload = false;
     ui_kit::settings_section(ui, "local_gguf", "Local GGUF", |ui| {
@@ -705,6 +725,16 @@ fn local_gguf_section(app: &mut SolveApp, ui: &mut egui::Ui) {
         if let Some(active) = &active {
             ui_kit::settings_short_note(ui, active);
         }
+        let projector_label = app.agent_chat.settings.local.projector.as_ref().cloned()
+            .or_else(|| app.agent_chat.settings.local.selected.as_deref()
+                .and_then(super::local_gguf::Runtime::discover_projector))
+            .map(|path| format!("Vision projector: {}", path.display()))
+            .unwrap_or_else(|| "No external vision projector (text-only unless the model embeds vision)".into());
+        ui_kit::settings_short_note(ui, &projector_label);
+        ui.horizontal_wrapped(|ui| {
+            pick_projector = ui_kit::button(ui, "Choose mmproj…", ui_kit::Button::Enabled(!running && !pending && can_open)).clicked();
+            autodetect_projector = ui_kit::button(ui, "Auto-detect mmproj", ui_kit::Button::Enabled(!running && !pending)).clicked();
+        });
         ui.horizontal_wrapped(|ui| {
             let b = ui_kit::button(ui, "Open GGUF…", ui_kit::Button::Enabled(can_open));
             crate::scenario::publish_handle("prefs:gguf:open", b.rect.center());
@@ -723,6 +753,12 @@ fn local_gguf_section(app: &mut SolveApp, ui: &mut egui::Ui) {
             ui_kit::text(ui, error, ui_kit::Text::Report("local_gguf_error", true));
         }
     });
+    if autodetect_projector {
+        app.agent_chat.settings.local.projector = None;
+    }
+    if pick_projector {
+        pick_projector_file(app);
+    }
     if open {
         pick_local_file(app, ui.ctx(), false);
     }
