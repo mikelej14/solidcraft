@@ -164,7 +164,7 @@ fn launch_local(app: &mut SolveApp, ctx: &egui::Context, server: &std::path::Pat
     let http = app.services.agent_http.clone();
     let local = &mut app.agent_chat.settings.local;
     let Some(model) = local.selected.clone() else { return };
-    // Explicit GPU-only loading: no silent full CPU copy/fallback.
+    // GPU-first automatic layer placement; allow system RAM overflow.
     let projector = local.projector.clone().or_else(|| super::local_gguf::Runtime::discover_projector(&model));
     match local.runtime.load(&model, server, local.context_size, projector.as_deref()) {
         Err(error) => {
@@ -202,7 +202,7 @@ fn launch_local(app: &mut SolveApp, ctx: &egui::Context, server: &std::path::Pat
                     local.waiting = Some(receiver);
                     local.ready = false;
                     local.error = None;
-                    local.status = "Loading GGUF on Vulkan GPU only (no CPU fallback)…".into();
+                    local.status = "Loading GGUF with automatic GPU/CPU layer fitting…".into();
                     ctx.request_repaint_after(std::time::Duration::from_millis(200));
                 }
                 Err(error) => {
