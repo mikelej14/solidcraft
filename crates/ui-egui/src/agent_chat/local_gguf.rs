@@ -17,17 +17,12 @@ pub const DEFAULT_CONTEXT_SIZE: u32 = 32_768;
 pub const MIN_CONTEXT_SIZE: u32 = 4_096;
 pub const MAX_CONTEXT_SIZE: u32 = 131_072;
 
-// Exclusive GPU inference settings. Keep them in one place so a regression
-// cannot silently reactivate CPU fallback or model-file memory mapping.
-// AMD integrated GPUs still share real physical system RAM with the CPU.
-fn gpu_only_flags() -> &'static [&'static str] {
-    &[
-        "--gpu-layers", "all", // Full GPU offload, including output layer
-        "--fit", "off",       // Do not automatically move weights to the CPU
-        "--no-host",          // Bypass redundant host staging for GPU tensors
-        "--load-mode", "none",// Modern llama.cpp: no model-file mmap or mlock
-        "--jinja",            // Embedded GGUF model-specific tool-call template
-    ]
+// Let llama.cpp automatically fit as many layers as possible on the GPU,
+// placing the remainder in CPU memory. Do not explicitly set --gpu-layers:
+// doing so disables automatic fitting. --ctx-size is explicitly supplied
+// separately, and fitting must not lower it.
+fn gpu_auto_flags() -> &'static [&'static str] {
+    &["--fit", "on", "--jinja"]
 }
 
 #[derive(Default)]
@@ -102,11 +97,10 @@ impl Runtime {
             // required for OpenAI-compatible structured tool calls (Qwen,
             // Granite, Ministral, and other supported GGUF families).
             // Never guess or impose a ChatML template from the filename.
-            // No hidden CPU copy or fallback: the model must fit on the GPU.
-            // The GGUF file is not memory-mapped, and Vulkan offload avoids
-            // an additional host staging buffer where supported.
+            // Allow CPU layers as needed; retain the exact requested context size.
+            // llama.cpp automatically chooses the number of GPU layers.
             .args(["--host", "127.0.0.1", "--port", &port.to_string(), "--ctx-size", &context_size.to_string()])
-            .args(gpu_only_flags())
+            .args(gpu_auto_flags())
             .arg("--model").arg(model)
             .arg("--alias").arg(&name)
             .stdin(Stdio::null())
@@ -364,14 +358,13 @@ mod tests {
     use super::*;
 
     #[test]
-    fn gpu_launch_flags_prevent_unrequested_cpu_copy_or_mmap() {
-        let flags = gpu_only_flags();
-        assert!(flags.windows(2).any(|args| args == ["--gpu-layers", "all"]));
-        assert!(flags.windows(2).any(|args| args == ["--fit", "off"]));
-        assert!(flags.windows(2).any(|args| args == ["--load-mode", "none"]));
-        assert!(flags.contains(&"--no-host"));
+    fn gpu_auto_fit_keeps_layer_count_under_runtime_control() {
+        let flags = gpu_auto_flags();
+        assert!(flags.windows(2).any(|args| args == ["--fit", "on"]));
         assert!(flags.contains(&"--jinja"));
-        assert!(!flags.iter().any(|f| *f == "0" || *f == "--mlock" || *f == "--mmap"));
+        assert!(!flags.contains(&"--gpu-layers"));
+        assert!(!flags.contains(&"--no-host"));
+        assert!(!flags.contains(&"--load-mode"));
     }
 
     #[test]
